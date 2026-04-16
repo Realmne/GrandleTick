@@ -1,0 +1,30 @@
+# macOS 系统文件
+.DS_Store
+
+# Xcode 编译产物
+build/
+DerivedData/
+*.hmap
+*.ipa
+
+# Xcode 个人配置状态
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xcuserstate
+
+# Xcode 崩溃日志与临时文件
+*.xccheckout
+*.moved-aside
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager 缓存
+.build/
+.swiftpm/
