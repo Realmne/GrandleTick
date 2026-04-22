@@ -17,25 +17,31 @@ class UsageManager {
     private var uncommittedSeconds: TimeInterval = 0
     
     private var lastRecordedAppName: String = ""
-    // ⭐ 核心修复：这里不再记录“显示标题”，而是记录“聚合标题”
     private var lastRecordedGroupedTitle: String = ""
-
+    
+    // ⭐ 新增：缓存上一次任务的精细化数据，以便在切换任务时一并存入数据库
+    private var lastRecordedDomain: String? = nil
+    private var lastRecordedBvid: String? = nil
+    private var lastRecordedFullUrl: String? = nil
+    
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
         self.tracker.track()
         self.lastRecordedAppName = self.tracker.currentAppName
         self.lastRecordedGroupedTitle = self.tracker.currentGroupedTitle
+        self.lastRecordedDomain = self.tracker.currentDomain
+        self.lastRecordedBvid = self.tracker.currentBvid
+        self.lastRecordedFullUrl = self.tracker.currentFullUrl
         self.updateDurations()
         startTracking()
     }
-
+    
     func startTracking() {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.tracker.track()
             
             let currentApp = self.tracker.currentAppName
-            // ⭐ 核心修复：底层判断状态是否改变，只看“聚合标题”是否改变
             let currentGrouped = self.tracker.currentGroupedTitle
             
             // 状态改变：如果聚合标题变了，才认为任务切换了
@@ -43,9 +49,15 @@ class UsageManager {
                 self.saveCurrentActivity()
                 self.lastRecordedAppName = currentApp
                 self.lastRecordedGroupedTitle = currentGrouped
+                
+                // ⭐ 同步更新精细化字段的缓存
+                self.lastRecordedDomain = self.tracker.currentDomain
+                self.lastRecordedBvid = self.tracker.currentBvid
+                self.lastRecordedFullUrl = self.tracker.currentFullUrl
+                
                 self.updateDurations()
             } else {
-                // 状态未变：比如切了分P，显示标题变了，但聚合标题没变，计时器继续累加！
+                // 状态未变：比如切了分P，显示标题变了，但聚合标题没变，计时器继续累加
                 if !currentApp.isEmpty && !currentApp.contains("权限受阻") {
                     self.uncommittedSeconds += 1
                     self.currentWindowTodayDuration += 1
@@ -66,22 +78,24 @@ class UsageManager {
             return
         }
         
-        // ⭐ 核心修复：写入数据库时，存入的是固定不变的“聚合标题”（P1 的名字）
+        // ⭐ 写入数据库时，附加新增的独立字段
         let log = ActivityLog(
             appName: lastRecordedAppName,
             windowTitle: lastRecordedGroupedTitle,
             startTime: Date().addingTimeInterval(-uncommittedSeconds),
-            duration: uncommittedSeconds
+            duration: uncommittedSeconds,
+            domain: lastRecordedDomain,
+            bvid: lastRecordedBvid,
+            fullUrl: lastRecordedFullUrl
         )
         context.insert(log)
         try? context.save()
         uncommittedSeconds = 0
     }
-
+    
     private func updateDurations() {
         guard let context = modelContext else { return }
         let appName = tracker.currentAppName
-        // ⭐ 核心修复：去数据库里查询历史时长时，必须用“聚合标题”去查
         let groupedTitle = tracker.currentGroupedTitle
         let startOfDay = Calendar.current.startOfDay(for: Date())
         
@@ -105,7 +119,7 @@ class UsageManager {
         
         self.currentWindowHistoricalDuration = windowHistoricalDb + uncommittedSeconds
     }
-
+    
     private func formatTime(_ seconds: TimeInterval) -> String {
         let h = Int(seconds) / 3600
         let m = (Int(seconds) % 3600) / 60
@@ -113,12 +127,10 @@ class UsageManager {
         return h > 0 ? String(format: "%02d时%02d分%02d秒", h, m, s) : String(format: "%02d分%02d秒", m, s)
     }
     
-    // 菜单栏：对应今日时长
     var formattedMenuDuration: String {
         formatTime(currentWindowTodayDuration)
     }
     
-    // Popover：对应历史累计时长
     var formattedPopoverDuration: String {
         formatTime(currentWindowHistoricalDuration)
     }
