@@ -5,7 +5,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     var usageManager: UsageManager
     
-    static var statsWindow: NSWindow?
+    static var statisticsWindow: NSWindow?
     static var whitelistWindow: NSWindow?
     
     private let requiredConfirmText = "我已知晓"
@@ -14,8 +14,8 @@ struct ContentView: View {
         VStack(spacing: 15) {
             if usageManager.tracker.currentWindowTitle == "需开启辅助功能权限" {
                 Button(action: {
-                    let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-                    NSWorkspace.shared.open(url)
+                    let accessibilitySettingsAddress = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+                    NSWorkspace.shared.open(accessibilitySettingsAddress)
                 }) {
                     HStack {
                         Image(systemName: "exclamationmark.shield.fill")
@@ -160,32 +160,32 @@ struct ContentView: View {
     }
     
     func openStatisticsWindow() {
-        if let existingWindow = ContentView.statsWindow {
+        if let existingWindow = ContentView.statisticsWindow {
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         
-        let statsWindow = NSWindow(
+        let statisticsWindow = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         
-        statsWindow.title = "GrandleTick 历史记录"
-        statsWindow.center()
-        statsWindow.isReleasedWhenClosed = false
-        statsWindow.titlebarAppearsTransparent = true
-        statsWindow.titleVisibility = .hidden
-        statsWindow.contentView = NSHostingView(rootView: StatisticsView().modelContext(modelContext))
+        statisticsWindow.title = "GrandleTick 历史记录"
+        statisticsWindow.center()
+        statisticsWindow.isReleasedWhenClosed = false
+        statisticsWindow.titlebarAppearsTransparent = true
+        statisticsWindow.titleVisibility = .hidden
+        statisticsWindow.contentView = NSHostingView(rootView: StatisticsView().modelContext(modelContext))
         
-        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: statsWindow, queue: .main) { [weak statsWindow] _ in
-            statsWindow?.close()
+        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: statisticsWindow, queue: .main) { [weak statisticsWindow] _ in
+            statisticsWindow?.close()
         }
         
-        ContentView.statsWindow = statsWindow
-        statsWindow.makeKeyAndOrderFront(nil)
+        ContentView.statisticsWindow = statisticsWindow
+        statisticsWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
     

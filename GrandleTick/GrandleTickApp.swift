@@ -12,21 +12,21 @@ struct GrandleTickApp: App {
 
         do {
             // 1. 获取当前系统用户的 Application Support 文件夹路径
-            let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let applicationSupportDirectoryURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             
             // 2. 为当前应用创建一个专属的文件夹，避免与其他应用冲突
-            let appDirectoryURL = appSupportURL.appendingPathComponent("GrandleTick", isDirectory: true)
+            let applicationDirectoryURL = applicationSupportDirectoryURL.appendingPathComponent("GrandleTick", isDirectory: true)
             
             // 3. 检查该文件夹是否存在，若不存在则创建
-            if !FileManager.default.fileExists(atPath: appDirectoryURL.path) {
-                try FileManager.default.createDirectory(at: appDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+            if !FileManager.default.fileExists(atPath: applicationDirectoryURL.path) {
+                try FileManager.default.createDirectory(at: applicationDirectoryURL, withIntermediateDirectories: true, attributes: nil)
             }
             
             // 4. 明确指定数据库文件（ActivityData.sqlite）的绝对路径
-            let databaseURL = appDirectoryURL.appendingPathComponent("ActivityData.sqlite")
+            let databaseFileURL = applicationDirectoryURL.appendingPathComponent("ActivityData.sqlite")
             
             // 5. 传入绝对路径，创建持久化的 ModelConfiguration
-            let configuration = ModelConfiguration(url: databaseURL)
+            let configuration = ModelConfiguration(url: databaseFileURL)
             
             // 6. 使用新的 configuration 实例化 ModelContainer
             container = try ModelContainer(for: ActivityLog.self, configurations: configuration)

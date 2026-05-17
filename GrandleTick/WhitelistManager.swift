@@ -5,7 +5,6 @@ import SwiftUI
 class WhitelistManager {
     static let shared = WhitelistManager()
     
-    // 用于区分哪些是系统默认预设的，哪些是用户自定义的
     let systemDefaultApps = ["预览", "Safari", "Google Chrome", "Microsoft Edge"]
     let systemDefaultDomains = ["bilibili.com", "chatgpt.com", "openai.com", "doubao.com", "yuanbao.tencent.com", "gemini.google.com", "claude.ai", "deepseek.com"]
     
@@ -18,7 +17,8 @@ class WhitelistManager {
     }
     
     init() {
-        // 如果是首次启动，写入默认数据
+        // 1. 如果是首次启动，就写入默认的应用白名单和域名白名单。
+        // 2. 如果用户已经有旧数据，就继续沿用旧数据，不覆盖现有配置。
         if UserDefaults.standard.object(forKey: "WhitelistedApps") == nil {
             UserDefaults.standard.set(systemDefaultApps, forKey: "WhitelistedApps")
         }
@@ -30,14 +30,14 @@ class WhitelistManager {
         self.whitelistedDomains = UserDefaults.standard.stringArray(forKey: "WhitelistedDomains") ?? []
     }
     
-    func addApp(_ name: String) {
-        if !whitelistedApps.contains(name) {
-            whitelistedApps.append(name)
+    func addApp(_ appName: String) {
+        if !whitelistedApps.contains(appName) {
+            whitelistedApps.append(appName)
         }
     }
     
-    func removeApp(_ name: String) {
-        whitelistedApps.removeAll { $0 == name }
+    func removeApp(_ appName: String) {
+        whitelistedApps.removeAll { $0 == appName }
     }
     
     func addDomain(_ domain: String) {

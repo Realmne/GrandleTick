@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct WhitelistView: View {
-    @State private var manager = WhitelistManager.shared
+    @State private var whitelistManager = WhitelistManager.shared
     
     var body: some View {
         VStack(spacing: 0) {
@@ -17,38 +17,39 @@ struct WhitelistView: View {
             .background(Material.regular)
             .overlay(Divider(), alignment: .bottom)
             
-            // --- 列表区域 ---
+            // 1. 列表区域同时展示系统默认项和用户自定义项。
+            //    这样用户可以清楚看到哪些内容是预设的，哪些内容是自己后续补充的。
             List {
                 Section(header: Text("默认应用").font(.headline)) {
-                    ForEach(manager.whitelistedApps.filter { manager.systemDefaultApps.contains($0) }, id: \.self) { app in
-                        AppRow(name: app) { manager.removeApp(app) }
+                    ForEach(whitelistManager.whitelistedApps.filter { whitelistManager.systemDefaultApps.contains($0) }, id: \.self) { appName in
+                        WhitelistEntryRow(name: appName) { whitelistManager.removeApp(appName) }
                     }
                 }
                 
                 Section(header: Text("用户自定义应用").font(.headline)) {
-                    let customApps = manager.whitelistedApps.filter { !manager.systemDefaultApps.contains($0) }
+                    let customApps = whitelistManager.whitelistedApps.filter { !whitelistManager.systemDefaultApps.contains($0) }
                     if customApps.isEmpty {
                         Text("暂无自定义应用").foregroundColor(.secondary).font(.caption)
                     } else {
-                        ForEach(customApps, id: \.self) { app in
-                            AppRow(name: app) { manager.removeApp(app) }
+                        ForEach(customApps, id: \.self) { appName in
+                            WhitelistEntryRow(name: appName) { whitelistManager.removeApp(appName) }
                         }
                     }
                 }
                 
                 Section(header: Text("默认域名 (需配合浏览器)").font(.headline)) {
-                    ForEach(manager.whitelistedDomains.filter { manager.systemDefaultDomains.contains($0) }, id: \.self) { domain in
-                        AppRow(name: domain) { manager.removeDomain(domain) }
+                    ForEach(whitelistManager.whitelistedDomains.filter { whitelistManager.systemDefaultDomains.contains($0) }, id: \.self) { domain in
+                        WhitelistEntryRow(name: domain) { whitelistManager.removeDomain(domain) }
                     }
                 }
                 
                 Section(header: Text("用户自定义域名").font(.headline)) {
-                    let customDomains = manager.whitelistedDomains.filter { !manager.systemDefaultDomains.contains($0) }
+                    let customDomains = whitelistManager.whitelistedDomains.filter { !whitelistManager.systemDefaultDomains.contains($0) }
                     if customDomains.isEmpty {
                         Text("暂无自定义域名").foregroundColor(.secondary).font(.caption)
                     } else {
                         ForEach(customDomains, id: \.self) { domain in
-                            AppRow(name: domain) { manager.removeDomain(domain) }
+                            WhitelistEntryRow(name: domain) { whitelistManager.removeDomain(domain) }
                         }
                     }
                 }
@@ -57,7 +58,7 @@ struct WhitelistView: View {
             
             Divider()
             
-            // --- 底部添加按钮 ---
+            // 2. 底部提供两个入口，分别补充应用白名单和域名白名单。
             HStack(spacing: 20) {
                 Button(action: addAppFromFinder) {
                     HStack {
@@ -94,9 +95,9 @@ struct WhitelistView: View {
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         NSApp.activate(ignoringOtherApps: true)
         
-        if panel.runModal() == .OK, let url = panel.url {
-            let appName = (url.lastPathComponent as NSString).deletingPathExtension
-            manager.addApp(appName)
+        if panel.runModal() == .OK, let selectedAppUrl = panel.url {
+            let appName = (selectedAppUrl.lastPathComponent as NSString).deletingPathExtension
+            whitelistManager.addApp(appName)
         }
     }
     
@@ -110,12 +111,12 @@ struct WhitelistView: View {
         alert.accessoryView = inputField
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            manager.addDomain(inputField.stringValue)
+            whitelistManager.addDomain(inputField.stringValue)
         }
     }
 }
 
-struct AppRow: View {
+struct WhitelistEntryRow: View {
     let name: String
     let onDelete: () -> Void
     var body: some View {

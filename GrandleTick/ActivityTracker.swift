@@ -9,16 +9,15 @@ struct BrowserTitleData {
 @Observable
 class ActivityTracker {
     var currentAppName: String = ""
-    var currentWindowTitle: String = ""    // ⭐ 用于 UI 显示的实时标题
-    var currentGroupedTitle: String = ""   // ⭐ 用于后台统计的聚合标题
+    var currentWindowTitle: String = ""    // 用于界面展示的实时标题
+    var currentGroupedTitle: String = ""   // 用于后台统计的聚合标题
     
-    // ⭐ 新增：暴露给 UsageManager 记录到数据库的精细化字段
     var currentDomain: String? = nil
-    var currentBvid: String? = nil
+    var currentBilibiliId: String? = nil
     var currentFullUrl: String? = nil
     
-    static var rawTitleToDataCache: [String: BrowserTitleData] = [:]
-    static var bvidToMainTitleCache: [String: String] = [:]
+    static var titleCache: [String: BrowserTitleData] = [:]
+    static var bilibiliIdToMainTitleCache: [String: String] = [:]
     
     init() {
         _ = checkAccessibilityPermissions()
@@ -38,7 +37,7 @@ class ActivityTracker {
         return AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
     
-    private func getBrowserURL(appName: String) -> String? {
+    private func getBrowserUrl(appName: String) -> String? {
         let script: String
         if appName.contains("Safari") {
             script = "tell application \"Safari\" to return URL of front document"
@@ -58,7 +57,7 @@ class ActivityTracker {
         return nil
     }
     
-    private func extractBilibiliID(from url: String) -> String? {
+    private func extractBilibiliIdentifier(from url: String) -> String? {
         let pattern = "(BV[a-zA-Z0-9]+|ep[0-9]+)"
         if let regex = try? NSRegularExpression(pattern: pattern, options: []),
            let match = regex.firstMatch(in: url, options: [], range: NSRange(location: 0, length: url.utf16.count)) {
@@ -67,11 +66,22 @@ class ActivityTracker {
         }
         return nil
     }
+
+    private func matchedWhitelistedDomainFromHost(_ host: String) -> String? {
+        WhitelistManager.shared.whitelistedDomains.first { domain in
+            host == domain || host.hasSuffix(".\(domain)")
+        }
+    }
+
+    private func browserTitleCacheKey(originalTitle: String, domain: String?) -> String {
+        "\(domain ?? "_no_domain_")|\(originalTitle)"
+    }
     
     func track() {
-        // ⭐ 每次重新追踪前，先重置精细化字段，防止非浏览器应用残留上次的数据
+        // 1. 每次重新追踪前，先重置浏览器精细化字段。
+        //    这样可以避免从浏览器切到普通应用时，上一条域名和链接信息残留到本次记录。
         self.currentDomain = nil
-        self.currentBvid = nil
+        self.currentBilibiliId = nil
         self.currentFullUrl = nil
         
         guard let activeApp = NSWorkspace.shared.frontmostApplication else { return }
@@ -90,8 +100,8 @@ class ActivityTracker {
         let appBundleName = activeApp.bundleURL?.deletingPathExtension().lastPathComponent ?? appName
         
         let isWhitelistedApp = WhitelistManager.shared.whitelistedApps.contains { whitelistedApp in
-            let target = whitelistedApp.lowercased()
-            return target == appName.lowercased() || target == appBundleName.lowercased()
+            let lowercasedWhitelistedApp = whitelistedApp.lowercased()
+            return lowercasedWhitelistedApp == appName.lowercased() || lowercasedWhitelistedApp == appBundleName.lowercased()
         }
         
         if !isWhitelistedApp {
@@ -101,15 +111,15 @@ class ActivityTracker {
             return
         }
         
-        let isBrowser = bundleId.contains("Safari") || bundleId.contains("Chrome") || bundleId.contains("Edge")
-        let isPreview = bundleId == "com.apple.Preview" || appName == "预览"
+        let isBrowserApp = bundleId.contains("Safari") || bundleId.contains("Chrome") || bundleId.contains("Edge")
+        let isPreviewApp = bundleId == "com.apple.Preview" || appName == "预览"
         
-        let pid = activeApp.processIdentifier
-        let appRef = AXUIElementCreateApplication(pid)
+        let processId = activeApp.processIdentifier
+        let appRef = AXUIElementCreateApplication(processId)
         var windowRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef)
+        let focusedWindowResult = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef)
         
-        if result == .success {
+        if focusedWindowResult == .success {
             var titleRef: CFTypeRef?
             let titleResult = AXUIElementCopyAttributeValue(windowRef as! AXUIElement, kAXTitleAttribute as CFString, &titleRef)
             
@@ -117,8 +127,7 @@ class ActivityTracker {
                 var title = titleRef as! String
                 let rawTitle = title
                 
-                // --- 预览 App 逻辑 ---
-                if isPreview {
+                if isPreviewApp {
                     let components = title.components(separatedBy: " - ")
                     if components.count > 1 {
                         if let last = components.last, last.contains("页") || last.contains("Page") {
@@ -134,24 +143,31 @@ class ActivityTracker {
                     return
                 }
                 
-                // --- 浏览器逻辑 ---
-                if isBrowser {
-                    // 取出 URL 先进行保存
-                    let urlString = self.getBrowserURL(appName: appName)
-                    self.currentFullUrl = urlString
+                // 2. 浏览器窗口优先根据当前网址识别真实域名。
+                //    只有先拿到域名，后面的标题缓存和统计分组才不会把不同网站合并到一起。
+                if isBrowserApp {
+                    let browserUrl = self.getBrowserUrl(appName: appName)
+                    self.currentFullUrl = browserUrl
+                    let matchedWhitelistedDomain: String? = {
+                        guard let browserUrl,
+                              let url = URL(string: browserUrl),
+                              let host = url.host?.lowercased() else {
+                            return nil
+                        }
+                        return self.matchedWhitelistedDomainFromHost(host)
+                    }()
                     
-                    if let cached = ActivityTracker.rawTitleToDataCache[rawTitle] {
+                    // 3. 标题缓存必须包含域名维度。
+                    //    相同网页标题如果来自不同域名，必须命中不同缓存键，不能共用一条缓存结果。
+                    if let cachedBrowserTitleData = ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: matchedWhitelistedDomain)] {
                         self.currentAppName = appName
-                        self.currentWindowTitle = cached.displayTitle
-                        self.currentGroupedTitle = cached.groupedTitle
+                        self.currentWindowTitle = cachedBrowserTitleData.displayTitle
+                        self.currentGroupedTitle = cachedBrowserTitleData.groupedTitle
                         
-                        // 从 URL 中补全 domain 和 bvid
-                        if let urlStr = urlString, let url = URL(string: urlStr), let host = url.host?.lowercased() {
-                            if let matchedDomain = WhitelistManager.shared.whitelistedDomains.first(where: { host.contains($0) }) {
-                                self.currentDomain = matchedDomain
-                                if matchedDomain == "bilibili.com" {
-                                    self.currentBvid = self.extractBilibiliID(from: urlStr)
-                                }
+                        if let matchedDomain = matchedWhitelistedDomain {
+                            self.currentDomain = matchedDomain
+                            if matchedDomain == "bilibili.com", let currentBrowserUrl = browserUrl {
+                                self.currentBilibiliId = self.extractBilibiliIdentifier(from: currentBrowserUrl)
                             }
                         }
                         return
@@ -159,41 +175,42 @@ class ActivityTracker {
                     
                     var displayTitle = rawTitle
                     var groupedTitle = rawTitle
-                    var matchedAnyDomain = false
+                    var hasMatchedWhitelistedDomain = false
                     
-                    if let urlStr = urlString,
-                       let url = URL(string: urlStr),
+                    // 4. 正常情况下直接依据网址做白名单匹配。
+                    //    如果命中 Bilibili，则继续提取视频标识；否则按真实域名单独归类。
+                    if let currentBrowserUrl = browserUrl,
+                       let url = URL(string: currentBrowserUrl),
                        let host = url.host?.lowercased() {
-                        
-                        // ⭐ 判断域名是否在自定义域名白名单里
-                        if let matchedDomain = WhitelistManager.shared.whitelistedDomains.first(where: { host.contains($0) }) {
-                            matchedAnyDomain = true
-                            self.currentDomain = matchedDomain // 保存独立域名
+
+                        if let matchedDomain = self.matchedWhitelistedDomainFromHost(host) {
+                            hasMatchedWhitelistedDomain = true
+                            self.currentDomain = matchedDomain
                             
                             if matchedDomain == "bilibili.com" {
-                                if let bvid = self.extractBilibiliID(from: urlStr) {
-                                    self.currentBvid = bvid // 保存BV号
+                                if let bilibiliId = self.extractBilibiliIdentifier(from: currentBrowserUrl) {
+                                    self.currentBilibiliId = bilibiliId
                                     
                                     if rawTitle.isEmpty || rawTitle.contains("无标题") || rawTitle.lowercased().contains("untitled") {
                                         displayTitle = "网页加载中..."
                                         groupedTitle = "网页加载中..."
                                     } else {
-                                        var cleanTitle = rawTitle
-                                        let bComponents = rawTitle.components(separatedBy: "_")
-                                        if bComponents.count > 1 {
-                                            cleanTitle = bComponents[0] + " (Bilibili)"
+                                        var cleanedTitle = rawTitle
+                                        let bilibiliTitleParts = rawTitle.components(separatedBy: "_")
+                                        if bilibiliTitleParts.count > 1 {
+                                            cleanedTitle = bilibiliTitleParts[0] + " (Bilibili)"
                                         } else {
-                                            let dashComponents = rawTitle.components(separatedBy: " - ")
-                                            if let first = dashComponents.first {
-                                                cleanTitle = first + " (Bilibili)"
+                                            let dashSeparatedTitleParts = rawTitle.components(separatedBy: " - ")
+                                            if let firstTitlePart = dashSeparatedTitleParts.first {
+                                                cleanedTitle = firstTitlePart + " (Bilibili)"
                                             }
                                         }
-                                        displayTitle = cleanTitle
-                                        if let mainTitle = ActivityTracker.bvidToMainTitleCache[bvid] {
+                                        displayTitle = cleanedTitle
+                                        if let mainTitle = ActivityTracker.bilibiliIdToMainTitleCache[bilibiliId] {
                                             groupedTitle = mainTitle
                                         } else {
-                                            ActivityTracker.bvidToMainTitleCache[bvid] = cleanTitle
-                                            groupedTitle = cleanTitle
+                                            ActivityTracker.bilibiliIdToMainTitleCache[bilibiliId] = cleanedTitle
+                                            groupedTitle = cleanedTitle
                                         }
                                     }
                                 } else {
@@ -207,38 +224,40 @@ class ActivityTracker {
                             }
                         }
                     } else {
-                        // 降级防线：AppleScript 取不到 URL 时，尝试从标题匹配白名单域名
-                        let lowerTitle = rawTitle.lowercased()
-                        if lowerTitle.contains("无标题") || lowerTitle.contains("untitled") {
+                        // 5. 如果浏览器没有返回网址，就退化成标题匹配。
+                        //    这一步只作为兜底，尽量保留统计能力，但优先级低于真实网址匹配。
+                        let lowercasedRawTitle = rawTitle.lowercased()
+                        if lowercasedRawTitle.contains("无标题") || lowercasedRawTitle.contains("untitled") {
                             displayTitle = "网页加载中..."
                             groupedTitle = "网页加载中..."
-                            matchedAnyDomain = true
+                            hasMatchedWhitelistedDomain = true
                         } else {
                             for domain in WhitelistManager.shared.whitelistedDomains {
                                 let keyword = domain.components(separatedBy: ".").first ?? domain
-                                if lowerTitle.contains(keyword) || (keyword == "bilibili" && lowerTitle.contains("哔哩哔哩")) {
+                                if lowercasedRawTitle.contains(keyword) || (keyword == "bilibili" && lowercasedRawTitle.contains("哔哩哔哩")) {
                                     displayTitle = rawTitle
                                     groupedTitle = keyword.capitalized
-                                    matchedAnyDomain = true
-                                    self.currentDomain = domain // 降级时尽量保存匹配到的 domain
+                                    hasMatchedWhitelistedDomain = true
+                                    self.currentDomain = domain
                                     break
                                 }
                             }
                         }
                     }
                     
-                    // 拦截不在域名白名单的浏览器行为
-                    if !matchedAnyDomain {
+                    // 6. 没有命中域名白名单的浏览器页面，直接忽略。
+                    //    这样可以保证统计结果只保留用户允许追踪的网站。
+                    if !hasMatchedWhitelistedDomain {
                         self.currentAppName = ""
                         self.currentWindowTitle = ""
                         self.currentGroupedTitle = ""
                         self.currentDomain = nil
-                        self.currentBvid = nil
+                        self.currentBilibiliId = nil
                         self.currentFullUrl = nil
                         return
                     }
                     
-                    ActivityTracker.rawTitleToDataCache[rawTitle] = BrowserTitleData(displayTitle: displayTitle, groupedTitle: groupedTitle)
+                    ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: self.currentDomain)] = BrowserTitleData(displayTitle: displayTitle, groupedTitle: groupedTitle)
                     
                     self.currentAppName = appName
                     self.currentWindowTitle = displayTitle
@@ -246,7 +265,6 @@ class ActivityTracker {
                     return
                 }
                 
-                // --- 常规第三方 App 逻辑 ---
                 self.currentAppName = appName
                 self.currentWindowTitle = rawTitle
                 self.currentGroupedTitle = appName

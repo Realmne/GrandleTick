@@ -7,14 +7,11 @@ struct StatisticsView: View {
     @Query(sort: \ActivityLog.startTime, order: .reverse) private var allLogs: [ActivityLog]
     
     @State private var whitelist = WhitelistManager.shared
-    @State private var cachedFilteredLogs: [ActivityLog] = []
-    @State private var cachedAppSummary: [(name: String, totalTime: TimeInterval)] = []
-    
-    // ⭐ 移除了 hoveredAppName，让它只归属图表子视图自己管理
+    @State private var filteredLogs: [ActivityLog] = []
+    @State private var summaryEntries: [(name: String, totalTime: TimeInterval)] = []
     
     var body: some View {
         VStack(spacing: 0) {
-            // --- 1. 固定在顶部的独立标题栏 ---
             HStack(alignment: .bottom) {
                 Text("今日活动总结")
                     .font(.system(size: 22, weight: .bold))
@@ -29,63 +26,7 @@ struct StatisticsView: View {
             .background(Material.regular)
             .overlay(Divider(), alignment: .bottom)
             
-            // --- 2. 数据滚动区域 ---
-            if cachedAppSummary.isEmpty {
-                VStack(spacing: 15) {
-                    Spacer()
-                    Image(systemName: "tray.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary.opacity(0.3))
-                    Text("当前白名单暂无匹配的活动记录")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 25) {
-                        
-                        // ⭐ 性能优化：将图表完全独立成子视图，实现“状态隔离”
-                        AppSummaryChartView(summaryData: cachedAppSummary)
-                            .padding(.horizontal, 5)
-                        
-                        // 列表详情 (此时图表怎么刷新，都不会再拖累这个庞大的列表了)
-                        VStack(spacing: 12) {
-                            ForEach(cachedAppSummary, id: \.name) { app in
-                                HStack(alignment: .top, spacing: 15) {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.15)).frame(width: 36, height: 36)
-                                        Text(String(app.name.prefix(1)).uppercased()).font(.system(size: 16, weight: .bold)).foregroundColor(.accentColor)
-                                    }
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack {
-                                            Text(app.name).font(.system(size: 15, weight: .semibold))
-                                            Spacer()
-                                            Text(formatDuration(app.totalTime)).font(.system(size: 14, design: .monospaced)).foregroundColor(.secondary)
-                                        }
-                                        
-                                        let subItems = details(for: app.name)
-                                        ForEach(subItems, id: \.title) { sub in
-                                            HStack(alignment: .top) {
-                                                Text("•").foregroundColor(.secondary)
-                                                Text(sub.title).font(.system(size: 12)).foregroundColor(.primary.opacity(0.7)).lineLimit(2)
-                                                Spacer()
-                                                if subItems.count > 1 { Text(formatDuration(sub.duration)).font(.system(size: 11)).foregroundColor(.secondary.opacity(0.8)) }
-                                            }
-                                            .contextMenu {
-                                                Button(role: .destructive) { deleteSpecificItem(appName: app.name, windowTitle: sub.title) } label: {
-                                                    Label("删除此条记录", systemImage: "trash")
-                                                }
-                                            }
-                                        }
-                                    }
-                                }.padding(15).background(Color.primary.opacity(0.04)).cornerRadius(15)
-                            }
-                        }
-                    }
-                    .padding(25)
-                }
-            }
+            statisticsContent
         }
         .frame(width: 500, height: 650)
         .ignoresSafeArea(.all, edges: .top)
@@ -94,47 +35,124 @@ struct StatisticsView: View {
         .onChange(of: whitelist.whitelistedApps) { _, _ in calculateData() }
         .onChange(of: whitelist.whitelistedDomains) { _, _ in calculateData() }
     }
-    
-    private func deleteSpecificItem(appName: String, windowTitle: String) {
-        let logsToDelete = allLogs.filter { $0.appName == appName && $0.windowTitle == windowTitle }
+
+    @ViewBuilder
+    private var statisticsContent: some View {
+        if summaryEntries.isEmpty {
+            emptyStateView
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 25) {
+                    SummaryChartView(summaryData: summaryEntries)
+                        .padding(.horizontal, 5)
+                    
+                    VStack(spacing: 12) {
+                        ForEach(summaryEntries, id: \.name) { summaryEntry in
+                            SummaryEntryCardView(
+                                summaryEntry: summaryEntry,
+                                detailEntries: details(for: summaryEntry.name),
+                                formatDuration: formatDuration,
+                                onDelete: { windowTitle in
+                                    deleteSpecificItem(selectedSummaryName: summaryEntry.name, windowTitle: windowTitle)
+                                }
+                            )
+                        }
+                    }
+                }
+                .padding(25)
+            }
+        }
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 15) {
+            Spacer()
+            Image(systemName: "tray.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary.opacity(0.3))
+            Text("当前白名单暂无匹配的活动记录")
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func deleteSpecificItem(selectedSummaryName: String, windowTitle: String) {
+        let logsToDelete = filteredLogs.filter {
+            summaryName(for: $0) == selectedSummaryName && $0.windowTitle == windowTitle
+        }
         for log in logsToDelete { modelContext.delete(log) }
         try? modelContext.save()
     }
     
     private func calculateData() {
-        cachedFilteredLogs = allLogs.filter { log in
+        // 1. 先过滤无效记录和未授权状态记录。
+        //    这一步只保留真正参与统计的活动数据，避免图表和列表被异常状态污染。
+        filteredLogs = allLogs.filter { log in
             if log.windowTitle.contains("权限") || log.windowTitle.contains("未知") || log.appName.isEmpty { return false }
             
-            let logAppName = log.appName.lowercased()
-            let isBrowser = logAppName.contains("safari") || logAppName.contains("chrome") || logAppName.contains("edge")
+            let lowercasedAppName = log.appName.lowercased()
+            let isBrowserApp = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
             
-            let isAppWhitelisted = whitelist.whitelistedApps.contains { app in
-                let target = app.lowercased()
-                return target == logAppName || target.contains(logAppName) || logAppName.contains(target)
+            // 2. 再检查应用白名单。
+            //    浏览器和普通应用都必须先通过应用级白名单，才允许进入后续统计流程。
+            let isWhitelistedApp = whitelist.whitelistedApps.contains { whitelistedApp in
+                let lowercasedWhitelistedApp = whitelistedApp.lowercased()
+                return lowercasedWhitelistedApp == lowercasedAppName
+                    || lowercasedWhitelistedApp.contains(lowercasedAppName)
+                    || lowercasedAppName.contains(lowercasedWhitelistedApp)
             }
-            if !isAppWhitelisted { return false }
+            if !isWhitelistedApp { return false }
             
-            if isBrowser {
-                let logTitle = log.windowTitle.lowercased()
-                if logTitle.contains("网页加载中") { return true }
-                return whitelist.whitelistedDomains.contains { domain in
-                    let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
-                    return logTitle.contains(keyword) || (keyword == "bilibili" && logTitle.contains("哔哩哔哩"))
-                }
+            if isBrowserApp {
+                let lowercasedWindowTitle = log.windowTitle.lowercased()
+                if lowercasedWindowTitle.contains("网页加载中") { return true }
+                
+                // 3. 浏览器记录优先按真实域名过滤。
+                //    只要能从数据库字段或标题里识别出域名，这条记录就会保留下来。
+                return browserDomain(for: log) != nil
             }
             return true
         }
         
-        let grouped = Dictionary(grouping: cachedFilteredLogs, by: { $0.appName })
-        cachedAppSummary = grouped.map { (name: $0.key, totalTime: $0.value.reduce(0) { $0 + $1.duration }) }
+        // 4. 最终汇总时，浏览器按真实域名分组，普通应用按应用名分组。
+        //    这样 `chatgpt.com` 和 `huya.com` 不会再先合并到同一个浏览器应用下面。
+        let grouped = Dictionary(grouping: filteredLogs, by: summaryName(for:))
+        summaryEntries = grouped.map { (name: $0.key, totalTime: $0.value.reduce(0) { $0 + $1.duration }) }
             .sorted { $0.totalTime > $1.totalTime }
     }
     
-    func details(for appName: String) -> [(title: String, duration: TimeInterval)] {
-        let appLogs = cachedFilteredLogs.filter { $0.appName == appName }
-        let grouped = Dictionary(grouping: appLogs, by: { $0.windowTitle })
+    func details(for summaryName: String) -> [(title: String, duration: TimeInterval)] {
+        let logs = filteredLogs.filter { self.summaryName(for: $0) == summaryName }
+        let grouped = Dictionary(grouping: logs, by: { $0.windowTitle })
         return grouped.map { (title: $0.key, duration: $0.value.reduce(0) { $0 + $1.duration }) }
             .sorted { $0.duration > $1.duration }
+    }
+
+    private func isBrowserApp(_ appName: String) -> Bool {
+        let lowercasedAppName = appName.lowercased()
+        return lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
+    }
+
+    private func browserDomain(for log: ActivityLog) -> String? {
+        if let domain = log.domain, whitelist.whitelistedDomains.contains(domain) {
+            return domain
+        }
+        
+        // 1. 新记录优先使用数据库里已经保存好的真实域名。
+        // 2. 老记录如果没有域名字段，再退化成标题关键词匹配。
+        let lowercasedWindowTitle = log.windowTitle.lowercased()
+        return whitelist.whitelistedDomains.first { domain in
+            let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
+            return lowercasedWindowTitle.contains(keyword) || (keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩"))
+        }
+    }
+
+    private func summaryName(for log: ActivityLog) -> String {
+        if isBrowserApp(log.appName), let domain = browserDomain(for: log) {
+            return domain
+        }
+        return log.appName
     }
     
     func formatDuration(_ seconds: TimeInterval) -> String {
@@ -144,12 +162,10 @@ struct StatisticsView: View {
     }
 }
 
-// MARK: - 独立的图表组件 (状态隔离核心)
-struct AppSummaryChartView: View {
+struct SummaryChartView: View {
     let summaryData: [(name: String, totalTime: TimeInterval)]
     
-    // ⭐ 这个状态现在只属于图表自己，改变它不会再触发外层巨大列表的重绘
-    @State private var hoveredAppName: String?
+    @State private var hoveredSummaryName: String?
     
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -160,22 +176,79 @@ struct AppSummaryChartView: View {
                 )
                 .foregroundStyle(by: .value("应用", item.name))
                 .cornerRadius(4)
-                .opacity(hoveredAppName == nil || hoveredAppName == item.name ? 1.0 : 0.5)
+                .opacity(hoveredSummaryName == nil || hoveredSummaryName == item.name ? 1.0 : 0.5)
             }
             .frame(height: 180)
             .chartLegend(.hidden)
             .chartOverlay { proxy in
-                TooltipOverlay(proxy: proxy, summaryData: summaryData, hoveredAppName: $hoveredAppName)
+                TooltipOverlay(proxy: proxy, summaryData: summaryData, hoveredSummaryName: $hoveredSummaryName)
             }
         }
     }
 }
 
-// 悬浮交互层
+struct SummaryEntryCardView: View {
+    let summaryEntry: (name: String, totalTime: TimeInterval)
+    let detailEntries: [(title: String, duration: TimeInterval)]
+    let formatDuration: (TimeInterval) -> String
+    let onDelete: (String) -> Void
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 15) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Text(String(summaryEntry.name.prefix(1)).uppercased())
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.accentColor)
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(summaryEntry.name)
+                        .font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Text(formatDuration(summaryEntry.totalTime))
+                        .font(.system(size: 14, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                
+                ForEach(detailEntries, id: \.title) { detailEntry in
+                    HStack(alignment: .top) {
+                        Text("•")
+                            .foregroundColor(.secondary)
+                        Text(detailEntry.title)
+                            .font(.system(size: 12))
+                            .foregroundColor(.primary.opacity(0.7))
+                            .lineLimit(2)
+                        Spacer()
+                        if detailEntries.count > 1 {
+                            Text(formatDuration(detailEntry.duration))
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary.opacity(0.8))
+                        }
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            onDelete(detailEntry.title)
+                        } label: {
+                            Label("删除此条记录", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+        }
+        .padding(15)
+        .background(Color.primary.opacity(0.04))
+        .cornerRadius(15)
+    }
+}
+
 struct TooltipOverlay: View {
     let proxy: ChartProxy
     let summaryData: [(name: String, totalTime: TimeInterval)]
-    @Binding var hoveredAppName: String?
+    @Binding var hoveredSummaryName: String?
     @State private var mousePosition: CGPoint?
     
     var body: some View {
@@ -190,23 +263,21 @@ struct TooltipOverlay: View {
                         switch phase {
                         case .active(let location):
                             mousePosition = location
-                            let currentHover = proxy.value(atY: location.y, as: String.self)
-                            // 仅当真的跨越了不同的柱子时，才去触发状态变更
-                            if hoveredAppName != currentHover {
-                                hoveredAppName = currentHover
+                            let currentHoveredSummaryName = proxy.value(atY: location.y, as: String.self)
+                            if hoveredSummaryName != currentHoveredSummaryName {
+                                hoveredSummaryName = currentHoveredSummaryName
                             }
                         case .ended:
                             mousePosition = nil
-                            if hoveredAppName != nil {
-                                hoveredAppName = nil
+                            if hoveredSummaryName != nil {
+                                hoveredSummaryName = nil
                             }
                         }
                     }
                 }
                 .overlay(alignment: .topLeading) {
-                    if let pos = mousePosition, let appName = hoveredAppName, let hoveredApp = summaryData.first(where: { $0.name == appName }) {
-                        MouseTooltipView(duration: hoveredApp.totalTime)
-                        // 去除了这里的 animation，让气泡绝对无延迟地 1:1 跟随鼠标
+                    if let pos = mousePosition, let summaryName = hoveredSummaryName, let hoveredSummaryEntry = summaryData.first(where: { $0.name == summaryName }) {
+                        MouseTooltipView(duration: hoveredSummaryEntry.totalTime)
                             .offset(x: pos.x + 15, y: pos.y - 30)
                     }
                 }
@@ -214,7 +285,6 @@ struct TooltipOverlay: View {
     }
 }
 
-// 气泡外观
 struct MouseTooltipView: View {
     let duration: TimeInterval
     var body: some View {
