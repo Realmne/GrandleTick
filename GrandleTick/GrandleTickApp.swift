@@ -32,6 +32,7 @@ struct GrandleTickApp: App {
             container = try ModelContainer(for: ActivityLog.self, configurations: configuration)
             
             let context = container.mainContext
+            LegacyStoreMigrator.migrateIfNeeded(context: context, appDirectoryURL: applicationDirectoryURL)
             _usageManager = State(initialValue: UsageManager(modelContext: context))
         } catch {
             fatalError("无法初始化数据库容器: \(error)")

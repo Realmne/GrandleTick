@@ -28,3 +28,6 @@ xcuserdata/
 # Swift Package Manager 缓存
 .build/
 .swiftpm/
+
+# 发布产物
+dist/
