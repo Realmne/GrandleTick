@@ -10,7 +10,13 @@ struct StatisticsView: View {
     @State private var selectedRange: StatisticsRange = .last7Days
     @State private var selectedDimension: RankingDimension = .app
     @State private var selectedDay: Date?
-    @State private var rangeLogs: [ActivityLog] = []
+    @State private var searchText: String = ""
+    @State private var appliedSearchText: String = ""
+    @State private var selectedContentFilter: ContentFilter = .all
+    @State private var selectedAppFilter: String?
+    @State private var selectedDomainFilter: String?
+    @State private var baseRangeLogs: [PreparedLog] = []
+    @State private var rangeLogs: [PreparedLog] = []
     @State private var daySummaries: [DaySummary] = []
     @State private var rankingEntriesCache: [RankingEntry] = []
     @State private var rangeTotalDuration: TimeInterval = 0
@@ -18,63 +24,89 @@ struct StatisticsView: View {
     @State private var selectedDayAppSummaries: [GroupedSummary] = []
     @State private var selectedDayDomainSummaries: [GroupedSummary] = []
     @State private var selectedDayPdfSummaries: [GroupedSummary] = []
+    @State private var longestSessionSummary: ContinuousSessionSummary?
+    @State private var appFilterOptions: [FilterOption] = []
+    @State private var domainFilterOptions: [FilterOption] = []
+    @State private var searchDebounceTask: Task<Void, Never>?
+    @State private var filterComputationTask: Task<Void, Never>?
+    @State private var filterComputationToken: UInt = 0
 
     private let calendar = Calendar.current
 
     var body: some View {
-        let effectiveSelectedDay = resolvedSelectedDay(from: daySummaries)
+        let effectiveSelectedDay = Self.resolvedSelectedDay(
+            currentSelection: selectedDay,
+            from: daySummaries,
+            calendar: calendar
+        )
+        let hasBaseRangeData = !baseRangeLogs.isEmpty
 
         VStack(spacing: 0) {
             headerView(totalDuration: rangeTotalDuration)
-            if rangeLogs.isEmpty {
+            if !hasBaseRangeData {
                 emptyStateView
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        overviewCards(
-                            totalDuration: rangeTotalDuration,
-                            activeDays: daySummaries.count,
-                            selectedDay: effectiveSelectedDay,
-                            selectedDayDuration: selectedDayDuration
-                        )
-
-                        RangeTrendSection(
-                            daySummaries: daySummaries,
-                            selectedDay: effectiveSelectedDay,
-                            onSelectDay: { selectedDay = $0 },
+                        FilterSection(
+                            searchText: $searchText,
+                            selectedContentFilter: $selectedContentFilter,
+                            selectedAppFilter: $selectedAppFilter,
+                            selectedDomainFilter: $selectedDomainFilter,
+                            appOptions: appFilterOptions,
+                            domainOptions: domainFilterOptions,
                             formatDuration: formatCompactDuration
                         )
 
-                        DayPickerSection(
-                            daySummaries: daySummaries,
-                            selectedDay: effectiveSelectedDay,
-                            onSelect: { selectedDay = $0 },
-                            formatDuration: formatCompactDuration,
-                            formatDate: formatShortDate
-                        )
+                        if rangeLogs.isEmpty {
+                            filteredEmptyStateView
+                        } else {
+                            overviewCards(
+                                totalDuration: rangeTotalDuration,
+                                activeDays: daySummaries.count,
+                                selectedDay: effectiveSelectedDay,
+                                selectedDayDuration: selectedDayDuration,
+                                longestSession: longestSessionSummary
+                            )
 
-                        RankingSection(
-                            selectedDimension: $selectedDimension,
-                            rankingEntries: rankingEntriesCache,
-                            formatDuration: formatCompactDuration
-                        )
+                            RangeTrendSection(
+                                daySummaries: daySummaries,
+                                selectedDay: effectiveSelectedDay,
+                                onSelectDay: updateSelectedDay,
+                                formatDuration: formatCompactDuration
+                            )
 
-                        SelectedDaySection(
-                            selectedDay: effectiveSelectedDay,
-                            appSummaries: selectedDayAppSummaries,
-                            domainSummaries: selectedDayDomainSummaries,
-                            pdfSummaries: selectedDayPdfSummaries,
-                            formatDuration: formatCompactDuration,
-                            formatDate: formatLongDate,
-                            onDelete: { category, summaryName, detailName in
-                                deleteLogs(
-                                    on: effectiveSelectedDay,
-                                    category: category,
-                                    summaryName: summaryName,
-                                    detailName: detailName
-                                )
-                            }
-                        )
+                            DayPickerSection(
+                                daySummaries: daySummaries,
+                                selectedDay: effectiveSelectedDay,
+                                onSelect: updateSelectedDay,
+                                formatDuration: formatCompactDuration,
+                                formatDate: formatShortDate
+                            )
+
+                            SelectedDaySection(
+                                selectedDay: effectiveSelectedDay,
+                                appSummaries: selectedDayAppSummaries,
+                                domainSummaries: selectedDayDomainSummaries,
+                                pdfSummaries: selectedDayPdfSummaries,
+                                formatDuration: formatCompactDuration,
+                                formatDate: formatLongDate,
+                                onDelete: { category, summaryName, detailName in
+                                    deleteLogs(
+                                        on: effectiveSelectedDay,
+                                        category: category,
+                                        summaryName: summaryName,
+                                        detailName: detailName
+                                    )
+                                }
+                            )
+
+                            RankingSection(
+                                selectedDimension: $selectedDimension,
+                                rankingEntries: rankingEntriesCache,
+                                formatDuration: formatCompactDuration
+                            )
+                        }
                     }
                     .padding(24)
                 }
@@ -88,7 +120,15 @@ struct StatisticsView: View {
         .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshRangeData() }
         .onChange(of: selectedRange) { _, _ in refreshRangeData() }
         .onChange(of: selectedDimension) { _, _ in refreshRankingEntries() }
-        .onChange(of: selectedDay) { _, _ in refreshSelectedDayData() }
+        .onChange(of: searchText) { _, _ in scheduleSearchRefresh() }
+        .onChange(of: appliedSearchText) { _, _ in refreshFilteredData() }
+        .onChange(of: selectedContentFilter) { _, _ in refreshFilteredData() }
+        .onChange(of: selectedAppFilter) { _, _ in refreshFilteredData() }
+        .onChange(of: selectedDomainFilter) { _, _ in refreshFilteredData() }
+        .onDisappear {
+            searchDebounceTask?.cancel()
+            filterComputationTask?.cancel()
+        }
     }
 
     @ViewBuilder
@@ -133,9 +173,10 @@ struct StatisticsView: View {
         totalDuration: TimeInterval,
         activeDays: Int,
         selectedDay: Date?,
-        selectedDayDuration: TimeInterval
+        selectedDayDuration: TimeInterval,
+        longestSession: ContinuousSessionSummary?
     ) -> some View {
-        HStack(spacing: 12) {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             OverviewCard(
                 title: "范围总时长",
                 value: formatDetailedDuration(totalDuration),
@@ -156,50 +197,25 @@ struct StatisticsView: View {
                 subtitle: selectedDay.map(formatLongDate) ?? "暂无日期",
                 tint: .orange
             )
+
+            OverviewCard(
+                title: "最长连续学习",
+                value: longestSession.map { formatCompactDuration($0.duration) } ?? "0m",
+                subtitle: longestSession.map(formatSessionSubtitle) ?? "当前筛选下暂无连续时段",
+                tint: .pink
+            )
         }
     }
 
-    private func eligibleLogs(from logs: [ActivityLog]) -> [ActivityLog] {
-        logs.filter { log in
-            if log.windowTitle.contains("权限") || log.windowTitle.contains("未知") || log.appName.isEmpty {
-                return false
-            }
-
-            let lowercasedAppName = log.appName.lowercased()
-            let isBrowser = isBrowserApp(log.appName)
-
-            let isWhitelistedApp = whitelist.whitelistedApps.contains { whitelistedApp in
-                let lowercasedWhitelistedApp = whitelistedApp.lowercased()
-                return lowercasedWhitelistedApp == lowercasedAppName
-                    || lowercasedWhitelistedApp.contains(lowercasedAppName)
-                    || lowercasedAppName.contains(lowercasedWhitelistedApp)
-            }
-
-            if !isWhitelistedApp {
-                return false
-            }
-
-            if isBrowser {
-                let lowercasedWindowTitle = log.windowTitle.lowercased()
-                if lowercasedWindowTitle.contains("网页加载中") {
-                    return true
-                }
-                return browserDomain(for: log) != nil
-            }
-
-            return true
-        }
-    }
-
-    private func dailySummaries(for logs: [ActivityLog]) -> [DaySummary] {
-        let grouped = Dictionary(grouping: logs) { calendar.startOfDay(for: $0.startTime) }
+    nonisolated private static func dailySummaries(for logs: [PreparedLog]) -> [DaySummary] {
+        let grouped = Dictionary(grouping: logs) { $0.dayStart }
         return grouped.map { date, dayLogs in
             DaySummary(date: date, totalTime: dayLogs.reduce(0) { $0 + $1.duration })
         }
         .sorted { $0.date < $1.date }
     }
 
-    private func rankingEntries(for logs: [ActivityLog], dimension: RankingDimension) -> [RankingEntry] {
+    nonisolated private static func rankingEntries(for logs: [PreparedLog], dimension: RankingDimension) -> [RankingEntry] {
         let grouped = Dictionary(grouping: logs) { log in
             rankingKey(for: log, dimension: dimension)
         }
@@ -216,7 +232,7 @@ struct StatisticsView: View {
         }
     }
 
-    private func groupedSummaries(for logs: [ActivityLog], dimension: RankingDimension) -> [GroupedSummary] {
+    nonisolated private static func groupedSummaries(for logs: [PreparedLog], dimension: RankingDimension) -> [GroupedSummary] {
         let grouped = Dictionary(grouping: logs) { log in
             rankingKey(for: log, dimension: dimension)
         }
@@ -253,43 +269,43 @@ struct StatisticsView: View {
         }
     }
 
-    private func logs(for selectedDay: Date?, in logs: [ActivityLog]) -> [ActivityLog] {
+    nonisolated private static func logs(for selectedDay: Date?, in logs: [PreparedLog], calendar: Calendar) -> [PreparedLog] {
         guard let selectedDay else { return [] }
         return logs.filter { calendar.isDate($0.startTime, inSameDayAs: selectedDay) }
     }
 
-    private func rankingKey(for log: ActivityLog, dimension: RankingDimension) -> String? {
+    nonisolated private static func rankingKey(for log: PreparedLog, dimension: RankingDimension) -> String? {
         switch dimension {
         case .app:
             return log.appName
         case .domain:
-            return browserDomain(for: log)
+            return log.resolvedDomain
         case .item:
             return log.windowTitle
         }
     }
 
-    private func detailKey(for log: ActivityLog, dimension: RankingDimension) -> String {
+    nonisolated private static func detailKey(for log: PreparedLog, dimension: RankingDimension) -> String {
         switch dimension {
         case .app:
             return log.windowTitle
         case .domain:
             return log.windowTitle
         case .item:
-            return browserDomain(for: log) ?? log.appName
+            return log.resolvedDomain ?? log.appName
         }
     }
 
-    private func detailSubtitle(for logs: [ActivityLog], dimension: RankingDimension) -> String? {
+    nonisolated private static func detailSubtitle(for logs: [PreparedLog], dimension: RankingDimension) -> String? {
         guard dimension == .item else { return nil }
 
-        let sources = Set(logs.map { browserDomain(for: $0) ?? $0.appName }).sorted()
+        let sources = Set(logs.map { $0.resolvedDomain ?? $0.appName }).sorted()
         guard !sources.isEmpty else { return nil }
         return sources.joined(separator: " · ")
     }
 
-    private func pdfSummaries(for logs: [ActivityLog]) -> [GroupedSummary] {
-        let pdfLogs = logs.filter { isPDFLog($0) }
+    nonisolated private static func pdfSummaries(for logs: [PreparedLog]) -> [GroupedSummary] {
+        let pdfLogs = logs.filter(\.isPDF)
         let grouped = Dictionary(grouping: pdfLogs) { $0.windowTitle }
 
         return grouped.map { title, titleLogs in
@@ -313,19 +329,6 @@ struct StatisticsView: View {
         }
     }
 
-    private func browserDomain(for log: ActivityLog) -> String? {
-        if let domain = log.domain, whitelist.whitelistedDomains.contains(domain) {
-            return domain
-        }
-
-        let lowercasedWindowTitle = log.windowTitle.lowercased()
-        return whitelist.whitelistedDomains.first { domain in
-            let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
-            return lowercasedWindowTitle.contains(keyword)
-                || (keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩"))
-        }
-    }
-
     private func isBrowserApp(_ appName: String) -> Bool {
         let lowercasedAppName = appName.lowercased()
         return lowercasedAppName.contains("safari")
@@ -340,48 +343,182 @@ struct StatisticsView: View {
             && lowercasedTitle.contains(".pdf")
     }
 
-    private func resolvedSelectedDay(from daySummaries: [DaySummary]) -> Date? {
+    nonisolated private static func resolvedSelectedDay(
+        currentSelection: Date?,
+        from daySummaries: [DaySummary],
+        calendar: Calendar
+    ) -> Date? {
         guard !daySummaries.isEmpty else { return nil }
 
-        if let selectedDay,
-           daySummaries.contains(where: { calendar.isDate($0.date, inSameDayAs: selectedDay) }) {
-            return selectedDay
+        if let currentSelection,
+           daySummaries.contains(where: { calendar.isDate($0.date, inSameDayAs: currentSelection) }) {
+            return currentSelection
         }
 
         return daySummaries.last?.date
     }
 
     private func refreshRangeData() {
-        let eligible = eligibleLogs(from: allLogs)
-        let newRangeLogs = eligible.filter { selectedRange.contains($0.startTime, calendar: calendar) }
-        let newDaySummaries = dailySummaries(for: newRangeLogs)
+        searchDebounceTask?.cancel()
+        filterComputationTask?.cancel()
 
-        rangeLogs = newRangeLogs
-        daySummaries = newDaySummaries
-        rangeTotalDuration = newRangeLogs.reduce(0) { $0 + $1.duration }
-
-        let resolvedDay = resolvedSelectedDay(from: newDaySummaries)
-        if !isSameDay(selectedDay, resolvedDay) {
-            selectedDay = resolvedDay
-        } else {
-            refreshSelectedDayData()
+        let whitelistSnapshot = WhitelistSnapshot(whitelist: whitelist)
+        let newRangeLogs = allLogs.compactMap { log in
+            PreparedLog(log: log, whitelist: whitelistSnapshot, calendar: calendar)
         }
+        .filter { selectedRange.contains($0.startTime, calendar: calendar) }
 
-        refreshRankingEntries()
+        baseRangeLogs = newRangeLogs
+        appFilterOptions = buildFilterOptions(from: newRangeLogs, dimension: .app)
+        domainFilterOptions = buildFilterOptions(from: newRangeLogs, dimension: .domain)
+        sanitizeFilterSelection()
+        appliedSearchText = normalizedSearchText(from: searchText)
+        refreshFilteredData()
+    }
+
+    private func refreshFilteredData() {
+        filterComputationTask?.cancel()
+        filterComputationToken &+= 1
+
+        let token = filterComputationToken
+        let sourceLogs = baseRangeLogs
+        let filters = activeFilters()
+        let selectedDimension = selectedDimension
+        let currentSelectedDay = selectedDay
+        let calendar = calendar
+
+        filterComputationTask = Task.detached(priority: .userInitiated) {
+            let newFilteredLogs = Self.filteredLogs(from: sourceLogs, using: filters)
+            let newDaySummaries = Self.dailySummaries(for: newFilteredLogs)
+            let resolvedDay = Self.resolvedSelectedDay(
+                currentSelection: currentSelectedDay,
+                from: newDaySummaries,
+                calendar: calendar
+            )
+            let selectedLogs = Self.logs(for: resolvedDay, in: newFilteredLogs, calendar: calendar)
+            let result = FilterComputationResult(
+                filteredLogs: newFilteredLogs,
+                daySummaries: newDaySummaries,
+                rangeTotalDuration: newFilteredLogs.reduce(0) { $0 + $1.duration },
+                longestSessionSummary: Self.longestContinuousSession(in: newFilteredLogs),
+                rankingEntries: Self.rankingEntries(for: newFilteredLogs, dimension: selectedDimension),
+                resolvedSelectedDay: resolvedDay,
+                selectedDayDuration: selectedLogs.reduce(0) { $0 + $1.duration },
+                selectedDayAppSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .app),
+                selectedDayDomainSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .domain),
+                selectedDayPdfSummaries: Self.pdfSummaries(for: selectedLogs)
+            )
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                guard token == filterComputationToken else { return }
+                rangeLogs = result.filteredLogs
+                daySummaries = result.daySummaries
+                rangeTotalDuration = result.rangeTotalDuration
+                longestSessionSummary = result.longestSessionSummary
+                rankingEntriesCache = result.rankingEntries
+                selectedDay = result.resolvedSelectedDay
+                selectedDayDuration = result.selectedDayDuration
+                selectedDayAppSummaries = result.selectedDayAppSummaries
+                selectedDayDomainSummaries = result.selectedDayDomainSummaries
+                selectedDayPdfSummaries = result.selectedDayPdfSummaries
+            }
+        }
     }
 
     private func refreshRankingEntries() {
-        rankingEntriesCache = rankingEntries(for: rangeLogs, dimension: selectedDimension)
+        rankingEntriesCache = Self.rankingEntries(for: rangeLogs, dimension: selectedDimension)
     }
 
     private func refreshSelectedDayData() {
-        let effectiveSelectedDay = resolvedSelectedDay(from: daySummaries)
-        let selectedLogs = logs(for: effectiveSelectedDay, in: rangeLogs)
+        let effectiveSelectedDay = Self.resolvedSelectedDay(
+            currentSelection: selectedDay,
+            from: daySummaries,
+            calendar: calendar
+        )
+        let selectedLogs = Self.logs(for: effectiveSelectedDay, in: rangeLogs, calendar: calendar)
 
         selectedDayDuration = selectedLogs.reduce(0) { $0 + $1.duration }
-        selectedDayAppSummaries = groupedSummaries(for: selectedLogs, dimension: .app)
-        selectedDayDomainSummaries = groupedSummaries(for: selectedLogs, dimension: .domain)
-        selectedDayPdfSummaries = pdfSummaries(for: selectedLogs)
+        selectedDayAppSummaries = Self.groupedSummaries(for: selectedLogs, dimension: .app)
+        selectedDayDomainSummaries = Self.groupedSummaries(for: selectedLogs, dimension: .domain)
+        selectedDayPdfSummaries = Self.pdfSummaries(for: selectedLogs)
+    }
+
+    nonisolated private static func filteredLogs(from logs: [PreparedLog], using filters: FilterCriteria) -> [PreparedLog] {
+        return logs.filter { log in
+            if let selectedAppFilter = filters.selectedAppFilter, log.appName != selectedAppFilter {
+                return false
+            }
+
+            if let selectedDomainFilter = filters.selectedDomainFilter, log.resolvedDomain != selectedDomainFilter {
+                return false
+            }
+
+            switch filters.selectedContentFilter {
+            case .all:
+                break
+            case .website:
+                if !log.isWebsite { return false }
+            case .pdf:
+                if !log.isPDF { return false }
+            }
+
+            if filters.normalizedSearchText.isEmpty {
+                return true
+            }
+
+            return log.searchableText.contains(filters.normalizedSearchText)
+        }
+    }
+
+    private func buildFilterOptions(from logs: [PreparedLog], dimension: RankingDimension) -> [FilterOption] {
+        Self.rankingEntries(for: logs, dimension: dimension).map {
+            FilterOption(name: $0.name, totalTime: $0.totalTime)
+        }
+    }
+
+    private func sanitizeFilterSelection() {
+        if let selectedAppFilter,
+           !appFilterOptions.contains(where: { $0.name == selectedAppFilter }) {
+            self.selectedAppFilter = nil
+        }
+
+        if let selectedDomainFilter,
+           !domainFilterOptions.contains(where: { $0.name == selectedDomainFilter }) {
+            self.selectedDomainFilter = nil
+        }
+    }
+
+    nonisolated private static func longestContinuousSession(in logs: [PreparedLog]) -> ContinuousSessionSummary? {
+        let sortedLogs = logs.sorted { $0.startTime < $1.startTime }
+        guard let firstLog = sortedLogs.first else { return nil }
+
+        let allowedGap: TimeInterval = 75
+        var currentStart = firstLog.startTime
+        var currentEnd = firstLog.startTime.addingTimeInterval(firstLog.duration)
+        var longest = ContinuousSessionSummary(start: currentStart, end: currentEnd)
+
+        for log in sortedLogs.dropFirst() {
+            let logStart = log.startTime
+            let logEnd = log.startTime.addingTimeInterval(log.duration)
+
+            if logStart.timeIntervalSince(currentEnd) <= allowedGap {
+                if logEnd > currentEnd {
+                    currentEnd = logEnd
+                }
+            } else {
+                let currentSession = ContinuousSessionSummary(start: currentStart, end: currentEnd)
+                if currentSession.duration > longest.duration {
+                    longest = currentSession
+                }
+                currentStart = logStart
+                currentEnd = logEnd
+            }
+        }
+
+        let finalSession = ContinuousSessionSummary(start: currentStart, end: currentEnd)
+        return finalSession.duration > longest.duration ? finalSession : longest
     }
 
     private func isSameDay(_ lhs: Date?, _ rhs: Date?) -> Bool {
@@ -398,18 +535,37 @@ struct StatisticsView: View {
     private func deleteLogs(on selectedDay: Date?, category: DetailCategory, summaryName: String, detailName: String) {
         guard let selectedDay else { return }
 
-        let logsToDelete = logs(for: selectedDay, in: rangeLogs).filter { log in
+        let whitelistSnapshot = WhitelistSnapshot(whitelist: whitelist)
+        let filters = activeFilters()
+
+        let logsToDelete = allLogs.compactMap { log -> (ActivityLog, PreparedLog)? in
+            guard let prepared = PreparedLog(log: log, whitelist: whitelistSnapshot, calendar: calendar) else {
+                return nil
+            }
+            guard selectedRange.contains(prepared.startTime, calendar: calendar) else {
+                return nil
+            }
+            guard calendar.isDate(prepared.startTime, inSameDayAs: selectedDay) else {
+                return nil
+            }
+            guard Self.filteredLogs(from: [prepared], using: filters).isEmpty == false else {
+                return nil
+            }
+            return (log, prepared)
+        }
+        .filter { _, prepared in
             switch category {
             case .app:
-                return rankingKey(for: log, dimension: .app) == summaryName
-                    && detailKey(for: log, dimension: .app) == detailName
+                return Self.rankingKey(for: prepared, dimension: .app) == summaryName
+                    && Self.detailKey(for: prepared, dimension: .app) == detailName
             case .domain:
-                return rankingKey(for: log, dimension: .domain) == summaryName
-                    && detailKey(for: log, dimension: .domain) == detailName
+                return Self.rankingKey(for: prepared, dimension: .domain) == summaryName
+                    && Self.detailKey(for: prepared, dimension: .domain) == detailName
             case .pdf:
-                return isPDFLog(log) && log.windowTitle == summaryName && log.windowTitle == detailName
+                return prepared.isPDF && prepared.windowTitle == summaryName && prepared.windowTitle == detailName
             }
         }
+        .map(\.0)
 
         guard !logsToDelete.isEmpty else { return }
 
@@ -419,6 +575,44 @@ struct StatisticsView: View {
 
         try? modelContext.save()
         refreshRangeData()
+    }
+
+    private func updateSelectedDay(_ day: Date) {
+        if !isSameDay(selectedDay, day) {
+            selectedDay = day
+        }
+        refreshSelectedDayData()
+    }
+
+    private func scheduleSearchRefresh() {
+        searchDebounceTask?.cancel()
+
+        let normalized = normalizedSearchText(from: searchText)
+        if normalized.isEmpty {
+            appliedSearchText = ""
+            return
+        }
+
+        searchDebounceTask = Task {
+            try? await Task.sleep(for: .milliseconds(220))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                appliedSearchText = normalized
+            }
+        }
+    }
+
+    private func normalizedSearchText(from text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func activeFilters() -> FilterCriteria {
+        FilterCriteria(
+            normalizedSearchText: appliedSearchText,
+            selectedContentFilter: selectedContentFilter,
+            selectedAppFilter: selectedAppFilter,
+            selectedDomainFilter: selectedDomainFilter
+        )
     }
 
     private func formatCompactDuration(_ seconds: TimeInterval) -> String {
@@ -450,6 +644,13 @@ struct StatisticsView: View {
         date.formatted(.dateTime.year().month(.defaultDigits).day())
     }
 
+    private func formatSessionSubtitle(_ session: ContinuousSessionSummary) -> String {
+        let dayText = session.start.formatted(.dateTime.month(.defaultDigits).day())
+        let startText = session.start.formatted(.dateTime.hour().minute())
+        let endText = session.end.formatted(.dateTime.hour().minute())
+        return "\(dayText) \(startText) - \(endText)"
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 14) {
             Spacer()
@@ -465,9 +666,36 @@ struct StatisticsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    private var filteredEmptyStateView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary.opacity(0.35))
+            Text("当前筛选下没有匹配的记录")
+                .font(.headline)
+            Text("可以修改筛选条件，或者直接清空筛选返回全部结果。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Button("清空筛选") {
+                clearFilters()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, minHeight: 280)
+    }
+
+    private func clearFilters() {
+        searchDebounceTask?.cancel()
+        searchText = ""
+        appliedSearchText = ""
+        selectedContentFilter = .all
+        selectedAppFilter = nil
+        selectedDomainFilter = nil
+    }
 }
 
-private enum StatisticsRange: String, CaseIterable, Identifiable {
+private enum StatisticsRange: String, CaseIterable, Identifiable, Sendable {
     case today
     case last7Days
     case last30Days
@@ -515,7 +743,23 @@ private enum StatisticsRange: String, CaseIterable, Identifiable {
     }
 }
 
-private enum RankingDimension: String, CaseIterable, Identifiable {
+private enum ContentFilter: String, CaseIterable, Identifiable, Sendable {
+    case all
+    case website
+    case pdf
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "全部"
+        case .website: return "网站"
+        case .pdf: return "PDF"
+        }
+    }
+}
+
+private enum RankingDimension: String, CaseIterable, Identifiable, Sendable {
     case app
     case domain
     case item
@@ -531,27 +775,34 @@ private enum RankingDimension: String, CaseIterable, Identifiable {
     }
 }
 
-private enum DetailCategory {
+private enum DetailCategory: Sendable {
     case app
     case domain
     case pdf
 }
 
-private struct DaySummary: Identifiable {
+private struct DaySummary: Identifiable, Sendable {
     let date: Date
     let totalTime: TimeInterval
 
     var id: Date { date }
 }
 
-private struct RankingEntry: Identifiable {
+private struct RankingEntry: Identifiable, Sendable {
     let name: String
     let totalTime: TimeInterval
 
     var id: String { name }
 }
 
-private struct GroupedSummary: Identifiable {
+private struct FilterOption: Identifiable, Sendable {
+    let name: String
+    let totalTime: TimeInterval
+
+    var id: String { name }
+}
+
+private struct GroupedSummary: Identifiable, Sendable {
     let name: String
     let totalTime: TimeInterval
     let details: [SummaryDetail]
@@ -559,12 +810,159 @@ private struct GroupedSummary: Identifiable {
     var id: String { name }
 }
 
-private struct SummaryDetail: Identifiable {
+private struct SummaryDetail: Identifiable, Sendable {
     let name: String
     let subtitle: String?
     let totalTime: TimeInterval
 
     var id: String { "\(name)|\(subtitle ?? "")" }
+}
+
+private struct ContinuousSessionSummary: Sendable {
+    let start: Date
+    let end: Date
+
+    var duration: TimeInterval {
+        max(0, end.timeIntervalSince(start))
+    }
+}
+
+private struct FilterCriteria: Sendable {
+    let normalizedSearchText: String
+    let selectedContentFilter: ContentFilter
+    let selectedAppFilter: String?
+    let selectedDomainFilter: String?
+}
+
+private struct FilterComputationResult: Sendable {
+    let filteredLogs: [PreparedLog]
+    let daySummaries: [DaySummary]
+    let rangeTotalDuration: TimeInterval
+    let longestSessionSummary: ContinuousSessionSummary?
+    let rankingEntries: [RankingEntry]
+    let resolvedSelectedDay: Date?
+    let selectedDayDuration: TimeInterval
+    let selectedDayAppSummaries: [GroupedSummary]
+    let selectedDayDomainSummaries: [GroupedSummary]
+    let selectedDayPdfSummaries: [GroupedSummary]
+}
+
+private struct WhitelistSnapshot: Sendable {
+    let lowercasedApps: [String]
+    let domains: [String]
+    let domainKeywords: [(domain: String, keyword: String)]
+
+    init(whitelist: WhitelistManager) {
+        self.lowercasedApps = whitelist.whitelistedApps.map { $0.lowercased() }
+        self.domains = whitelist.whitelistedDomains
+        self.domainKeywords = whitelist.whitelistedDomains.map { domain in
+            let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
+            return (domain: domain, keyword: keyword)
+        }
+    }
+}
+
+private struct PreparedLog: Identifiable, Sendable {
+    let identity: PreparedLogIdentity
+    let appName: String
+    let windowTitle: String
+    let startTime: Date
+    let dayStart: Date
+    let duration: TimeInterval
+    let resolvedDomain: String?
+    let bilibiliIdentifier: String?
+    let fullUrl: String?
+    let searchableText: String
+    let isPDF: Bool
+    let isWebsite: Bool
+
+    var id: PreparedLogIdentity { identity }
+
+    init?(log: ActivityLog, whitelist: WhitelistSnapshot, calendar: Calendar) {
+        if log.windowTitle.contains("权限") || log.windowTitle.contains("未知") || log.appName.isEmpty {
+            return nil
+        }
+
+        let lowercasedAppName = log.appName.lowercased()
+        let isWebsite = Self.isBrowserApp(log.appName)
+        let isWhitelistedApp = whitelist.lowercasedApps.contains { whitelistedApp in
+            whitelistedApp == lowercasedAppName
+                || whitelistedApp.contains(lowercasedAppName)
+                || lowercasedAppName.contains(whitelistedApp)
+        }
+
+        guard isWhitelistedApp else { return nil }
+
+        let resolvedDomain = Self.resolveDomain(for: log, whitelist: whitelist)
+        let lowercasedWindowTitle = log.windowTitle.lowercased()
+        if isWebsite && !lowercasedWindowTitle.contains("网页加载中") && resolvedDomain == nil {
+            return nil
+        }
+
+        self.identity = PreparedLogIdentity(
+            appName: log.appName,
+            windowTitle: log.windowTitle,
+            startTime: log.startTime,
+            duration: log.duration,
+            domain: log.domain,
+            bilibiliIdentifier: log.bilibiliIdentifier,
+            fullUrl: log.fullUrl
+        )
+        self.appName = log.appName
+        self.windowTitle = log.windowTitle
+        self.startTime = log.startTime
+        self.dayStart = calendar.startOfDay(for: log.startTime)
+        self.duration = log.duration
+        self.resolvedDomain = resolvedDomain
+        self.bilibiliIdentifier = log.bilibiliIdentifier
+        self.fullUrl = log.fullUrl
+        self.searchableText = [
+            log.appName,
+            log.windowTitle,
+            resolvedDomain ?? "",
+            log.fullUrl ?? ""
+        ]
+        .joined(separator: "\n")
+        .lowercased()
+        self.isPDF = Self.isPDF(log)
+        self.isWebsite = isWebsite
+    }
+
+    private static func resolveDomain(for log: ActivityLog, whitelist: WhitelistSnapshot) -> String? {
+        if let domain = log.domain, whitelist.domains.contains(domain) {
+            return domain
+        }
+
+        let lowercasedWindowTitle = log.windowTitle.lowercased()
+        return whitelist.domainKeywords.first { entry in
+            lowercasedWindowTitle.contains(entry.keyword)
+                || (entry.keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩"))
+        }?.domain
+    }
+
+    private static func isPDF(_ log: ActivityLog) -> Bool {
+        let lowercasedAppName = log.appName.lowercased()
+        let lowercasedTitle = log.windowTitle.lowercased()
+        return (lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview"))
+            && lowercasedTitle.contains(".pdf")
+    }
+
+    private static func isBrowserApp(_ appName: String) -> Bool {
+        let lowercasedAppName = appName.lowercased()
+        return lowercasedAppName.contains("safari")
+            || lowercasedAppName.contains("chrome")
+            || lowercasedAppName.contains("edge")
+    }
+}
+
+private struct PreparedLogIdentity: Hashable, Sendable {
+    let appName: String
+    let windowTitle: String
+    let startTime: Date
+    let duration: TimeInterval
+    let domain: String?
+    let bilibiliIdentifier: String?
+    let fullUrl: String?
 }
 
 private struct OverviewCard: View {
@@ -595,6 +993,140 @@ private struct OverviewCard: View {
         .background(
             RoundedRectangle(cornerRadius: 18)
                 .fill(tint.opacity(0.10))
+        )
+    }
+}
+
+private struct FilterSection: View {
+    @Binding var searchText: String
+    @Binding var selectedContentFilter: ContentFilter
+    @Binding var selectedAppFilter: String?
+    @Binding var selectedDomainFilter: String?
+    let appOptions: [FilterOption]
+    let domainOptions: [FilterOption]
+    let formatDuration: (TimeInterval) -> String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("筛选")
+                    .font(.system(size: 18, weight: .semibold))
+                Spacer()
+                if hasActiveFilters {
+                    Button("清空筛选") {
+                        searchText = ""
+                        selectedContentFilter = .all
+                        selectedAppFilter = nil
+                        selectedDomainFilter = nil
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                }
+            }
+
+            TextField("搜索应用、域名、标题或链接", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            Picker("内容类型", selection: $selectedContentFilter) {
+                ForEach(ContentFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 12) {
+                Menu {
+                    Button("全部应用") {
+                        selectedAppFilter = nil
+                    }
+
+                    if !appOptions.isEmpty {
+                        Divider()
+                    }
+
+                    ForEach(appOptions.prefix(12)) { option in
+                        Button {
+                            selectedAppFilter = option.name
+                        } label: {
+                            HStack {
+                                Text(option.name)
+                                Spacer()
+                                Text(formatDuration(option.totalTime))
+                            }
+                        }
+                    }
+                } label: {
+                    FilterChip(
+                        title: "应用",
+                        value: selectedAppFilter ?? "全部应用"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Menu {
+                    Button("全部域名") {
+                        selectedDomainFilter = nil
+                    }
+
+                    if !domainOptions.isEmpty {
+                        Divider()
+                    }
+
+                    ForEach(domainOptions.prefix(12)) { option in
+                        Button {
+                            selectedDomainFilter = option.name
+                        } label: {
+                            HStack {
+                                Text(option.name)
+                                Spacer()
+                                Text(formatDuration(option.totalTime))
+                            }
+                        }
+                    }
+                } label: {
+                    FilterChip(
+                        title: "域名",
+                        value: selectedDomainFilter ?? "全部域名"
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(18)
+        .background(Color.primary.opacity(0.04))
+        .cornerRadius(20)
+    }
+
+    private var hasActiveFilters: Bool {
+        !searchText.isEmpty
+            || selectedContentFilter != .all
+            || selectedAppFilter != nil
+            || selectedDomainFilter != nil
+    }
+}
+
+private struct FilterChip: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.secondary)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(0.6))
         )
     }
 }
@@ -793,11 +1325,8 @@ private struct RankingSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("范围排行")
-                    .font(.system(size: 18, weight: .semibold))
-                Spacer()
-            }
+            Text("使用时间总排行")
+                .font(.system(size: 18, weight: .semibold))
 
             Picker("排行维度", selection: $selectedDimension) {
                 ForEach(RankingDimension.allCases) { dimension in
@@ -853,7 +1382,7 @@ private struct SelectedDaySection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("当天明细")
+                    Text("选中日期明细")
                         .font(.system(size: 18, weight: .semibold))
                     Text(selectedDay.map(formatDate) ?? "暂无日期")
                         .font(.caption)
@@ -862,6 +1391,10 @@ private struct SelectedDaySection: View {
 
                 Spacer()
             }
+
+            Text("下面三组内容只显示当前选中这一天的数据")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             if appSummaries.isEmpty && domainSummaries.isEmpty && pdfSummaries.isEmpty {
                 Text("这一天没有可展开的记录")

@@ -137,7 +137,7 @@ struct ContentView: View {
         }
         
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 550),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 720),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
