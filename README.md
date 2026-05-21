@@ -93,9 +93,21 @@ sudo xattr -cr /Applications/GrandleTick.app
 4. 正常学习即可，软件会自动记录
 5. 需要回顾时，打开统计页查看趋势和明细
 
-## 使用截图
+## 界面预览
 
-![GrandleTick 使用截图](README-assets/usage-screenshot.png)
+以下截图使用演示数据生成，不包含真实个人记录。
+
+### 菜单栏
+
+![GrandleTick 菜单栏界面](README-assets/menu-popup-demo.png)
+
+### 白名单管理
+
+![GrandleTick 白名单管理](README-assets/whitelist-demo.png)
+
+### 统计页面
+
+![GrandleTick 统计页面](README-assets/statistics-demo.png)
 
 ## 数据与隐私
 
