@@ -20,11 +20,11 @@ struct StatisticsView: View {
     @State private var daySummaries: [DaySummary] = []
     @State private var rankingEntriesCache: [RankingEntry] = []
     @State private var rangeTotalDuration: TimeInterval = 0
-    @State private var selectedDayDuration: TimeInterval = 0
+    @State private var todayDuration: TimeInterval = 0
     @State private var selectedDayAppSummaries: [GroupedSummary] = []
     @State private var selectedDayDomainSummaries: [GroupedSummary] = []
     @State private var selectedDayPdfSummaries: [GroupedSummary] = []
-    @State private var longestSessionSummary: ContinuousSessionSummary?
+    @State private var topTopicSummary: TopicDurationSummary?
     @State private var appFilterOptions: [FilterOption] = []
     @State private var domainFilterOptions: [FilterOption] = []
     @State private var searchDebounceTask: Task<Void, Never>?
@@ -64,9 +64,8 @@ struct StatisticsView: View {
                             overviewCards(
                                 totalDuration: rangeTotalDuration,
                                 activeDays: daySummaries.count,
-                                selectedDay: effectiveSelectedDay,
-                                selectedDayDuration: selectedDayDuration,
-                                longestSession: longestSessionSummary
+                                todayDuration: todayDuration,
+                                topTopicSummary: topTopicSummary
                             )
 
                             RangeTrendSection(
@@ -136,9 +135,9 @@ struct StatisticsView: View {
         VStack(spacing: 14) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("历史复盘")
+                    Text("统计")
                         .font(.system(size: 22, weight: .bold))
-                    Text("把自动采集的数据真正用起来")
+                    Text("学习时间")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -172,13 +171,12 @@ struct StatisticsView: View {
     private func overviewCards(
         totalDuration: TimeInterval,
         activeDays: Int,
-        selectedDay: Date?,
-        selectedDayDuration: TimeInterval,
-        longestSession: ContinuousSessionSummary?
+        todayDuration: TimeInterval,
+        topTopicSummary: TopicDurationSummary?
     ) -> some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             OverviewCard(
-                title: "范围总时长",
+                title: "总时长",
                 value: formatDetailedDuration(totalDuration),
                 subtitle: selectedRange.title,
                 tint: .blue
@@ -187,21 +185,21 @@ struct StatisticsView: View {
             OverviewCard(
                 title: "活跃天数",
                 value: "\(activeDays)",
-                subtitle: activeDays == 1 ? "1 day" : "\(activeDays) days",
+                subtitle: "\(activeDays) 天",
                 tint: .green
             )
 
             OverviewCard(
-                title: "当前选中",
-                value: formatCompactDuration(selectedDayDuration),
-                subtitle: selectedDay.map(formatLongDate) ?? "暂无日期",
+                title: "今日时长",
+                value: formatCompactDuration(todayDuration),
+                subtitle: "今天",
                 tint: .orange
             )
 
             OverviewCard(
-                title: "最长连续学习",
-                value: longestSession.map { formatCompactDuration($0.duration) } ?? "0m",
-                subtitle: longestSession.map(formatSessionSubtitle) ?? "当前筛选下暂无连续时段",
+                title: "单主题最高时长",
+                value: topTopicSummary.map { formatCompactDuration($0.totalTime) } ?? "0分",
+                subtitle: topTopicSummary?.displayName ?? "无数据",
                 tint: .pink
             )
         }
@@ -239,6 +237,20 @@ struct StatisticsView: View {
 
         return grouped.compactMap { key, groupedLogs in
             guard let key else { return nil }
+
+            if dimension == .domain {
+                return GroupedSummary(
+                    name: key,
+                    totalTime: groupedLogs.reduce(0) { $0 + $1.duration },
+                    details: [
+                        SummaryDetail(
+                            name: key,
+                            subtitle: groupedLogs.first?.appName,
+                            totalTime: groupedLogs.reduce(0) { $0 + $1.duration }
+                        )
+                    ]
+                )
+            }
 
             let detailGroups = Dictionary(grouping: groupedLogs) { detailKey(for: $0, dimension: dimension) }
             let details = detailGroups.map { detailKey, detailLogs in
@@ -290,7 +302,7 @@ struct StatisticsView: View {
         case .app:
             return log.windowTitle
         case .domain:
-            return log.windowTitle
+            return log.resolvedDomain ?? log.appName
         case .item:
             return log.resolvedDomain ?? log.appName
         }
@@ -395,15 +407,16 @@ struct StatisticsView: View {
                 from: newDaySummaries,
                 calendar: calendar
             )
+            let todayLogs = Self.logs(for: Date(), in: newFilteredLogs, calendar: calendar)
             let selectedLogs = Self.logs(for: resolvedDay, in: newFilteredLogs, calendar: calendar)
             let result = FilterComputationResult(
                 filteredLogs: newFilteredLogs,
                 daySummaries: newDaySummaries,
                 rangeTotalDuration: newFilteredLogs.reduce(0) { $0 + $1.duration },
-                longestSessionSummary: Self.longestContinuousSession(in: newFilteredLogs),
+                topTopicSummary: Self.topTopicSummary(in: sourceLogs),
                 rankingEntries: Self.rankingEntries(for: newFilteredLogs, dimension: selectedDimension),
                 resolvedSelectedDay: resolvedDay,
-                selectedDayDuration: selectedLogs.reduce(0) { $0 + $1.duration },
+                todayDuration: todayLogs.reduce(0) { $0 + $1.duration },
                 selectedDayAppSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .app),
                 selectedDayDomainSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .domain),
                 selectedDayPdfSummaries: Self.pdfSummaries(for: selectedLogs)
@@ -416,10 +429,10 @@ struct StatisticsView: View {
                 rangeLogs = result.filteredLogs
                 daySummaries = result.daySummaries
                 rangeTotalDuration = result.rangeTotalDuration
-                longestSessionSummary = result.longestSessionSummary
+                topTopicSummary = result.topTopicSummary
                 rankingEntriesCache = result.rankingEntries
                 selectedDay = result.resolvedSelectedDay
-                selectedDayDuration = result.selectedDayDuration
+                todayDuration = result.todayDuration
                 selectedDayAppSummaries = result.selectedDayAppSummaries
                 selectedDayDomainSummaries = result.selectedDayDomainSummaries
                 selectedDayPdfSummaries = result.selectedDayPdfSummaries
@@ -439,7 +452,6 @@ struct StatisticsView: View {
         )
         let selectedLogs = Self.logs(for: effectiveSelectedDay, in: rangeLogs, calendar: calendar)
 
-        selectedDayDuration = selectedLogs.reduce(0) { $0 + $1.duration }
         selectedDayAppSummaries = Self.groupedSummaries(for: selectedLogs, dimension: .app)
         selectedDayDomainSummaries = Self.groupedSummaries(for: selectedLogs, dimension: .domain)
         selectedDayPdfSummaries = Self.pdfSummaries(for: selectedLogs)
@@ -490,35 +502,160 @@ struct StatisticsView: View {
         }
     }
 
-    nonisolated private static func longestContinuousSession(in logs: [PreparedLog]) -> ContinuousSessionSummary? {
-        let sortedLogs = logs.sorted { $0.startTime < $1.startTime }
-        guard let firstLog = sortedLogs.first else { return nil }
-
-        let allowedGap: TimeInterval = 75
-        var currentStart = firstLog.startTime
-        var currentEnd = firstLog.startTime.addingTimeInterval(firstLog.duration)
-        var longest = ContinuousSessionSummary(start: currentStart, end: currentEnd)
-
-        for log in sortedLogs.dropFirst() {
-            let logStart = log.startTime
-            let logEnd = log.startTime.addingTimeInterval(log.duration)
-
-            if logStart.timeIntervalSince(currentEnd) <= allowedGap {
-                if logEnd > currentEnd {
-                    currentEnd = logEnd
-                }
-            } else {
-                let currentSession = ContinuousSessionSummary(start: currentStart, end: currentEnd)
-                if currentSession.duration > longest.duration {
-                    longest = currentSession
-                }
-                currentStart = logStart
-                currentEnd = logEnd
-            }
+    nonisolated private static func explicitTopic(for log: PreparedLog) -> TopicDescriptor? {
+        if log.isPDF {
+            return makeTopicDescriptor(from: log.windowTitle)
         }
 
-        let finalSession = ContinuousSessionSummary(start: currentStart, end: currentEnd)
-        return finalSession.duration > longest.duration ? finalSession : longest
+        if log.resolvedDomain == "bilibili.com" {
+            return makeTopicDescriptor(from: log.windowTitle)
+        }
+
+        if isAssistantLog(log) {
+            return nil
+        }
+
+        if log.isWebsite {
+            return nil
+        }
+
+        if log.windowTitle == log.appName {
+            return nil
+        }
+
+        return makeTopicDescriptor(from: log.windowTitle)
+    }
+
+    nonisolated private static func inferredTopic(
+        for index: Int,
+        logs: [PreparedLog],
+        explicitTopics: [TopicDescriptor?]
+    ) -> TopicDescriptor? {
+        let previous = nearestExplicitTopic(from: index, step: -1, logs: logs, explicitTopics: explicitTopics)
+        let next = nearestExplicitTopic(from: index, step: 1, logs: logs, explicitTopics: explicitTopics)
+
+        switch (previous, next) {
+        case let (left?, right?) where left.topic.canonicalName == right.topic.canonicalName:
+            return left.topic
+        case let (left?, right?):
+            return left.distance <= right.distance ? left.topic : right.topic
+        case let (left?, nil):
+            return left.topic
+        case let (nil, right?):
+            return right.topic
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func nearestExplicitTopic(
+        from index: Int,
+        step: Int,
+        logs: [PreparedLog],
+        explicitTopics: [TopicDescriptor?]
+    ) -> (topic: TopicDescriptor, distance: TimeInterval)? {
+        let maxBridgeGap: TimeInterval = 45 * 60
+        var cursor = index + step
+        let originDate = logs[index].startTime
+
+        while explicitTopics.indices.contains(cursor) {
+            if let topic = explicitTopics[cursor] {
+                let distance = abs(logs[cursor].startTime.timeIntervalSince(originDate))
+                return distance <= maxBridgeGap ? (topic, distance) : nil
+            }
+            cursor += step
+        }
+
+        return nil
+    }
+
+    nonisolated private static func isAssistantLog(_ log: PreparedLog) -> Bool {
+        guard let domain = log.resolvedDomain?.lowercased() else {
+            return false
+        }
+
+        return [
+            "chatgpt.com",
+            "openai.com",
+            "claude.ai",
+            "deepseek.com",
+            "gemini.google.com",
+            "doubao.com",
+            "yuanbao.tencent.com"
+        ].contains(domain)
+    }
+
+    nonisolated private static func makeTopicDescriptor(from title: String) -> TopicDescriptor? {
+        let cleaned = cleanedTopicTitle(from: title)
+        guard !cleaned.isEmpty else { return nil }
+        let canonical = canonicalTopicTitle(from: cleaned)
+        guard !canonical.isEmpty else { return nil }
+        return TopicDescriptor(canonicalName: canonical, displayName: cleaned)
+    }
+
+    nonisolated private static func cleanedTopicTitle(from title: String) -> String {
+        var cleaned = title
+            .replacingOccurrences(of: " (Bilibili)", with: "")
+            .replacingOccurrences(of: ".pdf", with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let separatorIndex = cleaned.firstIndex(of: "|") {
+            cleaned = String(cleaned[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return cleaned
+    }
+
+    nonisolated private static func canonicalTopicTitle(from title: String) -> String {
+        let lowercased = title.lowercased()
+        let components = lowercased.components(separatedBy: CharacterSet.alphanumerics.inverted)
+        return components
+            .filter { $0.count >= 2 }
+            .joined(separator: " ")
+    }
+
+    nonisolated private static func topTopicSummary(in logs: [PreparedLog]) -> TopicDurationSummary? {
+        let sortedLogs = logs.sorted { $0.startTime < $1.startTime }
+        guard !sortedLogs.isEmpty else { return nil }
+
+        let explicitTopics = sortedLogs.map { explicitTopic(for: $0) }
+        let assignments = sortedLogs.enumerated().compactMap { index, log -> TopicAssignment? in
+            if let explicitTopic = explicitTopics[index] {
+                return TopicAssignment(
+                    canonicalName: explicitTopic.canonicalName,
+                    displayName: explicitTopic.displayName,
+                    duration: log.duration
+                )
+            }
+
+            guard isAssistantLog(log),
+                  let inferredTopic = inferredTopic(for: index, logs: sortedLogs, explicitTopics: explicitTopics) else {
+                return nil
+            }
+
+            return TopicAssignment(
+                canonicalName: inferredTopic.canonicalName,
+                displayName: inferredTopic.displayName,
+                duration: log.duration
+            )
+        }
+
+        let grouped = Dictionary(grouping: assignments, by: \.canonicalName)
+        return grouped.compactMap { canonicalName, topicAssignments in
+            guard let displayName = topicAssignments.first?.displayName else { return nil }
+            return TopicDurationSummary(
+                canonicalName: canonicalName,
+                displayName: displayName,
+                totalTime: topicAssignments.reduce(0) { $0 + $1.duration }
+            )
+        }
+        .sorted {
+            if $0.totalTime == $1.totalTime {
+                return $0.displayName < $1.displayName
+            }
+            return $0.totalTime > $1.totalTime
+        }
+        .first
     }
 
     private func isSameDay(_ lhs: Date?, _ rhs: Date?) -> Bool {
@@ -620,9 +757,9 @@ struct StatisticsView: View {
         let minutes = (Int(seconds) % 3600) / 60
 
         if hours > 0 {
-            return "\(hours)h \(minutes)m"
+            return "\(hours)时\(minutes)分"
         }
-        return "\(minutes)m"
+        return "\(minutes)分"
     }
 
     private func formatDetailedDuration(_ seconds: TimeInterval) -> String {
@@ -631,9 +768,9 @@ struct StatisticsView: View {
         let remainingSeconds = Int(seconds) % 60
 
         if hours > 0 {
-            return String(format: "%02dh %02dm %02ds", hours, minutes, remainingSeconds)
+            return String(format: "%02d时%02d分%02d秒", hours, minutes, remainingSeconds)
         }
-        return String(format: "%02dm %02ds", minutes, remainingSeconds)
+        return String(format: "%02d分%02d秒", minutes, remainingSeconds)
     }
 
     private func formatShortDate(_ date: Date) -> String {
@@ -644,22 +781,15 @@ struct StatisticsView: View {
         date.formatted(.dateTime.year().month(.defaultDigits).day())
     }
 
-    private func formatSessionSubtitle(_ session: ContinuousSessionSummary) -> String {
-        let dayText = session.start.formatted(.dateTime.month(.defaultDigits).day())
-        let startText = session.start.formatted(.dateTime.hour().minute())
-        let endText = session.end.formatted(.dateTime.hour().minute())
-        return "\(dayText) \(startText) - \(endText)"
-    }
-
     private var emptyStateView: some View {
         VStack(spacing: 14) {
             Spacer()
             Image(systemName: "chart.bar.xaxis")
                 .font(.system(size: 42))
                 .foregroundColor(.secondary.opacity(0.35))
-            Text("当前时间范围内还没有可复盘的记录")
+            Text("当前范围无记录")
                 .font(.headline)
-            Text("切换一下范围，或者先去白名单内的应用和网站累计一些数据。")
+            Text("请先在白名单应用或网站中使用。")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -672,9 +802,9 @@ struct StatisticsView: View {
             Image(systemName: "line.3.horizontal.decrease.circle")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary.opacity(0.35))
-            Text("当前筛选下没有匹配的记录")
+            Text("无匹配记录")
                 .font(.headline)
-            Text("可以修改筛选条件，或者直接清空筛选返回全部结果。")
+            Text("请调整筛选条件。")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Button("清空筛选") {
@@ -818,13 +948,21 @@ private struct SummaryDetail: Identifiable, Sendable {
     var id: String { "\(name)|\(subtitle ?? "")" }
 }
 
-private struct ContinuousSessionSummary: Sendable {
-    let start: Date
-    let end: Date
+private struct TopicDurationSummary: Sendable {
+    let canonicalName: String
+    let displayName: String
+    let totalTime: TimeInterval
+}
 
-    var duration: TimeInterval {
-        max(0, end.timeIntervalSince(start))
-    }
+private struct TopicAssignment: Sendable {
+    let canonicalName: String
+    let displayName: String
+    let duration: TimeInterval
+}
+
+private struct TopicDescriptor: Sendable {
+    let canonicalName: String
+    let displayName: String
 }
 
 private struct FilterCriteria: Sendable {
@@ -838,10 +976,10 @@ private struct FilterComputationResult: Sendable {
     let filteredLogs: [PreparedLog]
     let daySummaries: [DaySummary]
     let rangeTotalDuration: TimeInterval
-    let longestSessionSummary: ContinuousSessionSummary?
+    let topTopicSummary: TopicDurationSummary?
     let rankingEntries: [RankingEntry]
     let resolvedSelectedDay: Date?
-    let selectedDayDuration: TimeInterval
+    let todayDuration: TimeInterval
     let selectedDayAppSummaries: [GroupedSummary]
     let selectedDayDomainSummaries: [GroupedSummary]
     let selectedDayPdfSummaries: [GroupedSummary]
@@ -1143,12 +1281,8 @@ private struct RangeTrendSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("每日总时长趋势")
+                Text("每日时长")
                     .font(.system(size: 18, weight: .semibold))
-                Spacer()
-                Text("点柱子切换日期")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
 
             Chart(daySummaries) { daySummary in
@@ -1196,7 +1330,7 @@ private struct RangeTrendSection: View {
 
             if let strongestDay = daySummaries.max(by: { $0.totalTime < $1.totalTime }) {
                 HStack {
-                    Text("最高峰")
+                    Text("最高值")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -1284,7 +1418,7 @@ private struct DayPickerSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("按天查看")
+            Text("日期")
                 .font(.system(size: 18, weight: .semibold))
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1336,7 +1470,7 @@ private struct RankingSection: View {
             .pickerStyle(.segmented)
 
             if rankingEntries.isEmpty {
-                Text("当前维度下没有可展示的数据")
+                Text("无数据")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.top, 4)
@@ -1382,7 +1516,7 @@ private struct SelectedDaySection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("选中日期明细")
+                    Text("当日明细")
                         .font(.system(size: 18, weight: .semibold))
                     Text(selectedDay.map(formatDate) ?? "暂无日期")
                         .font(.caption)
@@ -1392,19 +1526,15 @@ private struct SelectedDaySection: View {
                 Spacer()
             }
 
-            Text("下面三组内容只显示当前选中这一天的数据")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
             if appSummaries.isEmpty && domainSummaries.isEmpty && pdfSummaries.isEmpty {
-                Text("这一天没有可展开的记录")
+                Text("无记录")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
                 VStack(spacing: 12) {
                     CategorySummaryGroup(
                         title: "应用",
-                        emptyText: "这一天没有应用记录",
+                        emptyText: "无应用记录",
                         summaries: appSummaries,
                         formatDuration: formatDuration,
                         onDelete: { summaryName, detailName in
@@ -1414,7 +1544,7 @@ private struct SelectedDaySection: View {
 
                     CategorySummaryGroup(
                         title: "域名",
-                        emptyText: "这一天没有域名记录",
+                        emptyText: "无域名记录",
                         summaries: domainSummaries,
                         formatDuration: formatDuration,
                         onDelete: { summaryName, detailName in
@@ -1424,7 +1554,7 @@ private struct SelectedDaySection: View {
 
                     CategorySummaryGroup(
                         title: "PDF",
-                        emptyText: "这一天没有 PDF 记录",
+                        emptyText: "无 PDF 记录",
                         summaries: pdfSummaries,
                         formatDuration: formatDuration,
                         onDelete: { summaryName, detailName in
@@ -1523,7 +1653,7 @@ private struct SummaryEntryCardView: View {
                         Button(role: .destructive) {
                             onDelete(detail.name)
                         } label: {
-                            Label("删除此条记录", systemImage: "trash")
+                            Label("删除记录", systemImage: "trash")
                         }
                     }
                 }

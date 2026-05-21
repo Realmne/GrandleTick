@@ -10,8 +10,31 @@ struct ContentView: View {
     
     private let requiredConfirmText = "我已知晓"
     
+    private var isUntracked: Bool {
+        usageManager.tracker.currentAppName.isEmpty
+    }
+    
+    private var currentTitle: String {
+        isUntracked ? "未追踪的窗口" : usageManager.tracker.currentWindowTitle
+    }
+    
+    private var currentSourceName: String {
+        isUntracked ? "其他应用 (非白名单)" : usageManager.tracker.currentAppName
+    }
+    
+    private var durationHeadline: String {
+        isUntracked ? "未在统计范围内" : "累计时长"
+    }
+    
+    private var durationSubtitle: String {
+        if isUntracked {
+            return "切换到白名单内的应用或网站后会继续累计"
+        }
+        return currentSourceName
+    }
+    
     var body: some View {
-        VStack(spacing: 15) {
+        VStack(spacing: 16) {
             if usageManager.tracker.currentWindowTitle == "需开启辅助功能权限" {
                 Button(action: {
                     let accessibilitySettingsAddress = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
@@ -31,102 +54,100 @@ struct ContentView: View {
                 .buttonStyle(.plain)
             }
             
-            VStack(alignment: .center, spacing: 8) {
-                let isUntracked = usageManager.tracker.currentAppName.isEmpty
-                Text(isUntracked ? "已暂停统计" : "正在使用")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                
-                HStack {
-                    Image(systemName: isUntracked ? "pause.circle.fill" : "app.badge.checkmark.fill")
-                        .foregroundColor(isUntracked ? .gray : .blue)
-                    Text(isUntracked ? "未追踪的窗口" : usageManager.tracker.currentWindowTitle)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                
-                Text(isUntracked ? "其他应用 (非白名单)" : usageManager.tracker.currentAppName)
-                    .font(.caption)
-                    .foregroundColor(.primary.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(1)
-            }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(Color.primary.opacity(0.05))
-            .cornerRadius(12)
-            
-            Divider()
-            
-            VStack(spacing: 5) {
-                let isUntracked = usageManager.tracker.currentAppName.isEmpty
-                let displayName = isUntracked ? "其他应用" : usageManager.tracker.currentWindowTitle
-                
-                Text(isUntracked ? "⏳ 已暂停记录" : "⏳ [\(displayName)] 合集总时长")
-                    .font(.caption)
-                    .bold()
+            VStack(alignment: .center, spacing: 12) {
+                StatusPill(
+                    text: isUntracked ? "已暂停统计" : "正在使用",
+                    tint: isUntracked ? .gray : .blue,
+                    systemImage: isUntracked ? "pause.fill" : "bolt.fill"
+                )
+
+                Image(systemName: isUntracked ? "pause.circle.fill" : "app.badge.checkmark.fill")
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(isUntracked ? .gray : .blue)
-                    .lineLimit(1)
-                
+                    .frame(width: 28, height: 28)
+
+                VStack(spacing: 6) {
+                    Text(currentTitle)
+                        .font(.system(size: 18, weight: .bold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+
+                    Text(currentSourceName)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            
+            VStack(alignment: .center, spacing: 8) {
+                Text(durationHeadline)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                 Text(usageManager.formattedPopoverDuration)
                     .font(.system(size: 36, weight: .bold, design: .monospaced))
                     .foregroundColor(isUntracked ? .gray : .primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                    .frame(height: 50)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Text(durationSubtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.center)
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color.primary.opacity(0.035))
+            )
             
             VStack(spacing: 10) {
-                Button(action: openWhitelistWindow) {
-                    HStack {
-                        Image(systemName: "checklist")
-                        Text("自定义白名单管理")
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.blue)
-                
-                Button(action: openStatisticsWindow) {
-                    HStack {
-                        Image(systemName: "chart.pie.fill")
-                        Text("查看今日统计图表")
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-                
-                Button(action: { showResetConfirmation() }) {
-                    HStack {
-                        Image(systemName: "trash.fill")
-                        Text("清空所有历史数据")
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.red.opacity(0.8))
+                ActionCapsuleButton(
+                    title: "自定义白名单管理",
+                    systemImage: "checklist",
+                    tint: .blue,
+                    action: openWhitelistWindow
+                )
+
+                ActionCapsuleButton(
+                    title: "查看今日统计图表",
+                    systemImage: "chart.pie.fill",
+                    tint: .secondary,
+                    action: openStatisticsWindow
+                )
+
+                ActionCapsuleButton(
+                    title: "清空所有历史数据",
+                    systemImage: "trash.fill",
+                    tint: .red.opacity(0.8),
+                    action: showResetConfirmation
+                )
                 
                 Divider().padding(.horizontal, 40)
                 
-                Button(action: { NSApplication.shared.terminate(nil) }) {
-                    HStack {
-                        Image(systemName: "power")
-                        Text("退出 GrandleTick")
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
+                ActionCapsuleButton(
+                    title: "退出 GrandleTick",
+                    systemImage: "power",
+                    tint: .secondary,
+                    action: { NSApplication.shared.terminate(nil) }
+                )
             }
+            .padding(.horizontal, 12)
         }
         .padding()
-        .frame(width: 280)
+        .frame(width: 320)
     }
     
     func openWhitelistWindow() {
@@ -143,7 +164,7 @@ struct ContentView: View {
             defer: false
         )
         
-        window.title = "白名单与追踪管理"
+        window.title = "白名单"
         window.center()
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
@@ -173,7 +194,7 @@ struct ContentView: View {
             defer: false
         )
         
-        statisticsWindow.title = "GrandleTick 历史记录"
+        statisticsWindow.title = "统计"
         statisticsWindow.center()
         statisticsWindow.isReleasedWhenClosed = false
         statisticsWindow.titlebarAppearsTransparent = true
@@ -223,5 +244,48 @@ struct ContentView: View {
         } catch {
             print("❌ [Database] 清空失败: \(error.localizedDescription)")
         }
+    }
+}
+
+private struct StatusPill: View {
+    let text: String
+    let tint: Color
+    let systemImage: String
+    
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(tint)
+            .padding(.vertical, 5)
+            .padding(.horizontal, 9)
+            .background(
+                Capsule()
+                    .fill(tint.opacity(0.12))
+            )
+    }
+}
+
+private struct ActionCapsuleButton: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(tint.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
     }
 }

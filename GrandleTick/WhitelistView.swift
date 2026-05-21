@@ -37,30 +37,30 @@ struct WhitelistView: View {
                     actionsSection
 
                     WhitelistCategoryCard(
-                        title: "应用白名单",
-                        subtitle: "只统计这些阅读器和浏览器里的学习行为",
+                        title: "应用",
+                        subtitle: "统计这些应用",
                         symbolName: "app.connected.to.app.below.fill",
                         tint: .blue,
                         totalCount: whitelistManager.whitelistedApps.count,
-                        defaultTitle: "系统默认应用",
+                        defaultTitle: "默认",
                         defaultItems: defaultApps,
-                        customTitle: "你添加的应用",
+                        customTitle: "自定义",
                         customItems: customApps,
-                        emptyText: "还没有额外添加应用",
+                        emptyText: "无自定义项",
                         onDelete: { whitelistManager.removeApp($0) }
                     )
 
                     WhitelistCategoryCard(
-                        title: "网站白名单",
-                        subtitle: "浏览器内只会记录这些域名下的学习页面",
+                        title: "域名",
+                        subtitle: "统计这些域名",
                         symbolName: "globe.europe.africa.fill",
                         tint: .teal,
                         totalCount: whitelistManager.whitelistedDomains.count,
-                        defaultTitle: "系统默认域名",
+                        defaultTitle: "默认",
                         defaultItems: defaultDomains,
-                        customTitle: "你添加的域名",
+                        customTitle: "自定义",
                         customItems: customDomains,
-                        emptyText: "还没有额外添加域名",
+                        emptyText: "无自定义项",
                         onDelete: { whitelistManager.removeDomain($0) }
                     )
 
@@ -76,10 +76,10 @@ struct WhitelistView: View {
 
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("白名单与追踪管理")
+            Text("白名单")
                 .font(.system(size: 24, weight: .bold))
 
-            Text("决定哪些应用和网站会被计入学习时间。默认项负责开箱即用，自定义项负责贴合你的真实学习环境。")
+            Text("设置统计范围")
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -97,7 +97,7 @@ struct WhitelistView: View {
             WhitelistCountCard(
                 title: "应用",
                 value: "\(whitelistManager.whitelistedApps.count)",
-                detail: "\(customApps.count) 个自定义",
+                detail: "自定义 \(customApps.count) 项",
                 symbolName: "macwindow.on.rectangle",
                 tint: .blue
             )
@@ -105,7 +105,7 @@ struct WhitelistView: View {
             WhitelistCountCard(
                 title: "域名",
                 value: "\(whitelistManager.whitelistedDomains.count)",
-                detail: "\(customDomains.count) 个自定义",
+                detail: "自定义 \(customDomains.count) 项",
                 symbolName: "network",
                 tint: .teal
             )
@@ -130,10 +130,10 @@ struct WhitelistView: View {
 
     private var hintSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("使用说明")
+            Text("说明")
                 .font(.system(size: 14, weight: .semibold))
 
-            Text("浏览器里的记录需要同时命中应用白名单和域名白名单。删除默认项后，对应内容会立刻停止被统计。")
+            Text("浏览器记录需同时命中应用和域名白名单。")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -161,8 +161,8 @@ struct WhitelistView: View {
 
     private func addDomainManually() {
         let alert = NSAlert()
-        alert.messageText = "添加要追踪的域名"
-        alert.informativeText = "请输入域名，例如: github.com"
+        alert.messageText = "添加域名"
+        alert.informativeText = "例如：github.com"
         alert.addButton(withTitle: "添加")
         alert.addButton(withTitle: "取消")
         let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
@@ -257,7 +257,7 @@ private struct WhitelistSectionBlock: View {
                 .foregroundColor(.secondary)
 
             if items.isEmpty {
-                Text(emptyText ?? "暂无内容")
+                Text(emptyText ?? "无内容")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 6)

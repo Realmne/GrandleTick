@@ -1,62 +1,127 @@
 import SwiftUI
 import SwiftData
-import Foundation // 需引入 Foundation 处理文件目录
+import Foundation
+import AppKit
 
 @main
 struct GrandleTickApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     let container: ModelContainer
     @State private var usageManager: UsageManager
 
     init() {
-        NSApplication.shared.setActivationPolicy(.accessory)
-
         do {
-            // 1. 获取当前系统用户的 Application Support 文件夹路径
             let applicationSupportDirectoryURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            
-            // 2. 为当前应用创建一个专属的文件夹，避免与其他应用冲突
             let applicationDirectoryURL = applicationSupportDirectoryURL.appendingPathComponent("GrandleTick", isDirectory: true)
-            
-            // 3. 检查该文件夹是否存在，若不存在则创建
+
             if !FileManager.default.fileExists(atPath: applicationDirectoryURL.path) {
                 try FileManager.default.createDirectory(at: applicationDirectoryURL, withIntermediateDirectories: true, attributes: nil)
             }
-            
-            // 4. 明确指定数据库文件（ActivityData.sqlite）的绝对路径
+
             let databaseFileURL = applicationDirectoryURL.appendingPathComponent("ActivityData.sqlite")
-            
-            // 5. 传入绝对路径，创建持久化的 ModelConfiguration
             let configuration = ModelConfiguration(url: databaseFileURL)
-            
-            // 6. 使用新的 configuration 实例化 ModelContainer
+
             container = try ModelContainer(for: ActivityLog.self, configurations: configuration)
-            
+
             let context = container.mainContext
             LegacyStoreMigrator.migrateIfNeeded(context: context, appDirectoryURL: applicationDirectoryURL)
-            _usageManager = State(initialValue: UsageManager(modelContext: context))
+            ActivityLogCompactor.compactIfNeeded(context: context, appDirectoryURL: applicationDirectoryURL)
+            let manager = UsageManager(modelContext: context)
+            _usageManager = State(initialValue: manager)
+            appDelegate.configure(usageManager: manager, modelContext: context)
         } catch {
             fatalError("无法初始化数据库容器: \(error)")
         }
     }
-    
+
     var body: some Scene {
-        MenuBarExtra {
-            ContentView(usageManager: usageManager)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "clock.fill")
-                Text(usageManager.formattedMenuDuration)
-                    .monospacedDigit()
-                
-                if !usageManager.tracker.currentAppName.isEmpty {
-                    Text("|")
-                        .foregroundColor(.secondary)
-                    Text(usageManager.tracker.currentAppName)
-                        .font(.system(size: 12))
-                }
-            }
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
         .modelContainer(container)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var usageManager: UsageManager?
+    private var modelContext: ModelContext?
+    private var statusBarController: StatusBarController?
+
+    func configure(usageManager: UsageManager, modelContext: ModelContext) {
+        self.usageManager = usageManager
+        self.modelContext = modelContext
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let usageManager, let modelContext else { return }
+        statusBarController = StatusBarController(
+            usageManager: usageManager,
+            modelContext: modelContext
+        )
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        usageManager?.flushPendingSession()
+    }
+}
+
+@MainActor
+final class StatusBarController: NSObject {
+    private let usageManager: UsageManager
+    private let modelContext: ModelContext
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let popover = NSPopover()
+
+    init(usageManager: UsageManager, modelContext: ModelContext) {
+        self.usageManager = usageManager
+        self.modelContext = modelContext
+        super.init()
+        configureStatusItem()
+        configurePopover()
+        bindUsageManager()
+    }
+
+    private func configureStatusItem() {
+        guard let button = statusItem.button else { return }
+        button.target = self
+        button.action = #selector(togglePopover(_:))
+        button.image = NSImage(systemSymbolName: "clock.fill", accessibilityDescription: "GrandleTick")
+        button.imagePosition = .imageLeft
+        button.lineBreakMode = .byTruncatingTail
+    }
+
+    private func configurePopover() {
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentSize = NSSize(width: 320, height: 420)
+        popover.contentViewController = NSHostingController(
+            rootView: ContentView(usageManager: usageManager)
+                .modelContext(modelContext)
+        )
+    }
+
+    private func bindUsageManager() {
+        usageManager.menuBarTitleDidChange = { [weak self] title in
+            self?.applyStatusItemTitle(title)
+        }
+        applyStatusItemTitle(usageManager.formattedMenuDuration)
+    }
+
+    private func applyStatusItemTitle(_ title: String) {
+        guard let button = statusItem.button else { return }
+        button.title = title
+    }
+
+    @objc
+    private func togglePopover(_ sender: AnyObject?) {
+        guard let button = statusItem.button else { return }
+
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
     }
 }

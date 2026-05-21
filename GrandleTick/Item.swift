@@ -11,16 +11,18 @@ final class ActivityLog {
     var domain: String?                      // 真实域名，例如 "bilibili.com"
     @Attribute(originalName: "bvid")
     var bilibiliIdentifier: String?          // B站专属标识，例如 "BV1xx..."
+    var bilibiliTidV2: Int?                  // B站视频分区 tid_v2
     @Attribute(originalName: "fullUrl")
     var fullUrl: String?                     // 完整网页地址
     
-    init(appName: String, windowTitle: String, startTime: Date, duration: TimeInterval = 0, domain: String? = nil, bilibiliIdentifier: String? = nil, fullUrl: String? = nil) {
+    init(appName: String, windowTitle: String, startTime: Date, duration: TimeInterval = 0, domain: String? = nil, bilibiliIdentifier: String? = nil, bilibiliTidV2: Int? = nil, fullUrl: String? = nil) {
         self.appName = appName
         self.windowTitle = windowTitle
         self.startTime = startTime
         self.duration = duration
         self.domain = domain
         self.bilibiliIdentifier = bilibiliIdentifier
+        self.bilibiliTidV2 = bilibiliTidV2
         self.fullUrl = fullUrl
     }
 }
