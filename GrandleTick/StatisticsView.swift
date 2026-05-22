@@ -24,7 +24,7 @@ struct StatisticsView: View {
     @State private var selectedDayAppSummaries: [GroupedSummary] = []
     @State private var selectedDayDomainSummaries: [GroupedSummary] = []
     @State private var selectedDayPdfSummaries: [GroupedSummary] = []
-    @State private var topTopicSummary: TopicDurationSummary?
+    @State private var topAppSummary: AppDurationSummary?
     @State private var appFilterOptions: [FilterOption] = []
     @State private var domainFilterOptions: [FilterOption] = []
     @State private var searchDebounceTask: Task<Void, Never>?
@@ -65,7 +65,7 @@ struct StatisticsView: View {
                                 totalDuration: rangeTotalDuration,
                                 activeDays: daySummaries.count,
                                 todayDuration: todayDuration,
-                                topTopicSummary: topTopicSummary
+                                topAppSummary: topAppSummary
                             )
 
                             RangeTrendSection(
@@ -172,7 +172,7 @@ struct StatisticsView: View {
         totalDuration: TimeInterval,
         activeDays: Int,
         todayDuration: TimeInterval,
-        topTopicSummary: TopicDurationSummary?
+        topAppSummary: AppDurationSummary?
     ) -> some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             OverviewCard(
@@ -197,9 +197,9 @@ struct StatisticsView: View {
             )
 
             OverviewCard(
-                title: "单主题最高时长",
-                value: topTopicSummary.map { formatCompactDuration($0.totalTime) } ?? "0分",
-                subtitle: topTopicSummary?.displayName ?? "无数据",
+                title: "单应用最高累计时长",
+                value: topAppSummary.map { formatCompactDuration($0.totalTime) } ?? "0分",
+                subtitle: topAppSummary?.displayName ?? "无数据",
                 tint: .pink
             )
         }
@@ -413,7 +413,7 @@ struct StatisticsView: View {
                 filteredLogs: newFilteredLogs,
                 daySummaries: newDaySummaries,
                 rangeTotalDuration: newFilteredLogs.reduce(0) { $0 + $1.duration },
-                topTopicSummary: Self.topTopicSummary(in: sourceLogs),
+                topAppSummary: Self.topAppSummary(in: sourceLogs),
                 rankingEntries: Self.rankingEntries(for: newFilteredLogs, dimension: selectedDimension),
                 resolvedSelectedDay: resolvedDay,
                 todayDuration: todayLogs.reduce(0) { $0 + $1.duration },
@@ -429,7 +429,7 @@ struct StatisticsView: View {
                 rangeLogs = result.filteredLogs
                 daySummaries = result.daySummaries
                 rangeTotalDuration = result.rangeTotalDuration
-                topTopicSummary = result.topTopicSummary
+                topAppSummary = result.topAppSummary
                 rankingEntriesCache = result.rankingEntries
                 selectedDay = result.resolvedSelectedDay
                 todayDuration = result.todayDuration
@@ -502,160 +502,18 @@ struct StatisticsView: View {
         }
     }
 
-    nonisolated private static func explicitTopic(for log: PreparedLog) -> TopicDescriptor? {
-        if log.isPDF {
-            return makeTopicDescriptor(from: log.windowTitle)
-        }
-
-        if log.resolvedDomain == "bilibili.com" {
-            return makeTopicDescriptor(from: log.windowTitle)
-        }
-
-        if isAssistantLog(log) {
-            return nil
-        }
-
-        if log.isWebsite {
-            return nil
-        }
-
-        if log.windowTitle == log.appName {
-            return nil
-        }
-
-        return makeTopicDescriptor(from: log.windowTitle)
+    nonisolated private static func isEntertainmentLog(_ log: PreparedLog) -> Bool {
+        // 这个判断只服务于学习向概览卡片，不影响原始日志、明细列表或其它排行。
+        log.resolvedDomain == "bilibili.com" && log.windowTitle == "娱乐"
     }
 
-    nonisolated private static func inferredTopic(
-        for index: Int,
-        logs: [PreparedLog],
-        explicitTopics: [TopicDescriptor?]
-    ) -> TopicDescriptor? {
-        let previous = nearestExplicitTopic(from: index, step: -1, logs: logs, explicitTopics: explicitTopics)
-        let next = nearestExplicitTopic(from: index, step: 1, logs: logs, explicitTopics: explicitTopics)
-
-        switch (previous, next) {
-        case let (left?, right?) where left.topic.canonicalName == right.topic.canonicalName:
-            return left.topic
-        case let (left?, right?):
-            return left.distance <= right.distance ? left.topic : right.topic
-        case let (left?, nil):
-            return left.topic
-        case let (nil, right?):
-            return right.topic
-        default:
-            return nil
+    nonisolated private static func topAppSummary(in logs: [PreparedLog]) -> AppDurationSummary? {
+        // “单应用最高累计时长”默认排除 B站娱乐内容。
+        // 这样这张卡更接近“学习里最常用的应用”，而不是“娱乐最长的应用”。
+        let filteredLogs = logs.filter { !isEntertainmentLog($0) }
+        return rankingEntries(for: filteredLogs, dimension: .app).first.map {
+            AppDurationSummary(displayName: $0.name, totalTime: $0.totalTime)
         }
-    }
-
-    nonisolated private static func nearestExplicitTopic(
-        from index: Int,
-        step: Int,
-        logs: [PreparedLog],
-        explicitTopics: [TopicDescriptor?]
-    ) -> (topic: TopicDescriptor, distance: TimeInterval)? {
-        let maxBridgeGap: TimeInterval = 45 * 60
-        var cursor = index + step
-        let originDate = logs[index].startTime
-
-        while explicitTopics.indices.contains(cursor) {
-            if let topic = explicitTopics[cursor] {
-                let distance = abs(logs[cursor].startTime.timeIntervalSince(originDate))
-                return distance <= maxBridgeGap ? (topic, distance) : nil
-            }
-            cursor += step
-        }
-
-        return nil
-    }
-
-    nonisolated private static func isAssistantLog(_ log: PreparedLog) -> Bool {
-        guard let domain = log.resolvedDomain?.lowercased() else {
-            return false
-        }
-
-        return [
-            "chatgpt.com",
-            "openai.com",
-            "claude.ai",
-            "deepseek.com",
-            "gemini.google.com",
-            "doubao.com",
-            "yuanbao.tencent.com"
-        ].contains(domain)
-    }
-
-    nonisolated private static func makeTopicDescriptor(from title: String) -> TopicDescriptor? {
-        let cleaned = cleanedTopicTitle(from: title)
-        guard !cleaned.isEmpty else { return nil }
-        let canonical = canonicalTopicTitle(from: cleaned)
-        guard !canonical.isEmpty else { return nil }
-        return TopicDescriptor(canonicalName: canonical, displayName: cleaned)
-    }
-
-    nonisolated private static func cleanedTopicTitle(from title: String) -> String {
-        var cleaned = title
-            .replacingOccurrences(of: " (Bilibili)", with: "")
-            .replacingOccurrences(of: ".pdf", with: "", options: [.caseInsensitive])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let separatorIndex = cleaned.firstIndex(of: "|") {
-            cleaned = String(cleaned[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        return cleaned
-    }
-
-    nonisolated private static func canonicalTopicTitle(from title: String) -> String {
-        let lowercased = title.lowercased()
-        let components = lowercased.components(separatedBy: CharacterSet.alphanumerics.inverted)
-        return components
-            .filter { $0.count >= 2 }
-            .joined(separator: " ")
-    }
-
-    nonisolated private static func topTopicSummary(in logs: [PreparedLog]) -> TopicDurationSummary? {
-        let sortedLogs = logs.sorted { $0.startTime < $1.startTime }
-        guard !sortedLogs.isEmpty else { return nil }
-
-        let explicitTopics = sortedLogs.map { explicitTopic(for: $0) }
-        let assignments = sortedLogs.enumerated().compactMap { index, log -> TopicAssignment? in
-            if let explicitTopic = explicitTopics[index] {
-                return TopicAssignment(
-                    canonicalName: explicitTopic.canonicalName,
-                    displayName: explicitTopic.displayName,
-                    duration: log.duration
-                )
-            }
-
-            guard isAssistantLog(log),
-                  let inferredTopic = inferredTopic(for: index, logs: sortedLogs, explicitTopics: explicitTopics) else {
-                return nil
-            }
-
-            return TopicAssignment(
-                canonicalName: inferredTopic.canonicalName,
-                displayName: inferredTopic.displayName,
-                duration: log.duration
-            )
-        }
-
-        let grouped = Dictionary(grouping: assignments, by: \.canonicalName)
-        return grouped.compactMap { canonicalName, topicAssignments in
-            guard let displayName = topicAssignments.first?.displayName else { return nil }
-            return TopicDurationSummary(
-                canonicalName: canonicalName,
-                displayName: displayName,
-                totalTime: topicAssignments.reduce(0) { $0 + $1.duration }
-            )
-        }
-        .sorted {
-            if $0.totalTime == $1.totalTime {
-                return $0.displayName < $1.displayName
-            }
-            return $0.totalTime > $1.totalTime
-        }
-        .first
     }
 
     private func isSameDay(_ lhs: Date?, _ rhs: Date?) -> Bool {
@@ -948,21 +806,9 @@ private struct SummaryDetail: Identifiable, Sendable {
     var id: String { "\(name)|\(subtitle ?? "")" }
 }
 
-private struct TopicDurationSummary: Sendable {
-    let canonicalName: String
+private struct AppDurationSummary: Sendable {
     let displayName: String
     let totalTime: TimeInterval
-}
-
-private struct TopicAssignment: Sendable {
-    let canonicalName: String
-    let displayName: String
-    let duration: TimeInterval
-}
-
-private struct TopicDescriptor: Sendable {
-    let canonicalName: String
-    let displayName: String
 }
 
 private struct FilterCriteria: Sendable {
@@ -976,7 +822,7 @@ private struct FilterComputationResult: Sendable {
     let filteredLogs: [PreparedLog]
     let daySummaries: [DaySummary]
     let rangeTotalDuration: TimeInterval
-    let topTopicSummary: TopicDurationSummary?
+    let topAppSummary: AppDurationSummary?
     let rankingEntries: [RankingEntry]
     let resolvedSelectedDay: Date?
     let todayDuration: TimeInterval

@@ -92,6 +92,9 @@ final class UsageManager {
             return
         }
 
+        // currentSession 用于“当前这一次正在累计的对象”。
+        // 这里保留 fullUrl 只是为了落库留档，方便后续排查或扩展；
+        // 但累计口径本身不能依赖 fullUrl，否则普通网站会被按具体页面拆碎。
         currentSession = ActiveSession(
             identity: trackedActivity.identity,
             startDate: startDate,
@@ -177,10 +180,12 @@ final class UsageManager {
         })
 
         let matchingLogs = ((try? context.fetch(descriptor)) ?? []).filter { log in
-            let matchesFullURL = identity.fullUrl == nil || log.fullUrl == identity.fullUrl
-            return log.domain == identity.domain
+            // 累计规则：
+            // 1. 普通网站按域名累计，不按 fullUrl / 会话链接累计。
+            // 2. B站是唯一例外，按 bilibiliIdentifier（BV号）区分不同视频。
+            // 3. 本地应用继续按 appName + groupedTitle 累计。
+            log.domain == identity.domain
                 && log.bilibiliIdentifier == identity.bilibiliIdentifier
-                && matchesFullURL
         }
 
         let startOfDay = Calendar.current.startOfDay(for: now)
@@ -220,11 +225,12 @@ final class UsageManager {
 }
 
 private struct SessionIdentity: Hashable {
+    // 这是“累计身份”而不是“原始日志主键”。
+    // 不要把 fullUrl 放进这里；否则 ChatGPT、Google Docs 这类网站会被拆成每个页面单独累计。
     let appName: String
     let groupedTitle: String
     let domain: String?
     let bilibiliIdentifier: String?
-    let fullUrl: String?
 }
 
 private struct TrackedActivity {
@@ -248,13 +254,15 @@ private struct TrackedActivity {
         bilibiliIdentifier = tracker.currentBilibiliId
         bilibiliTidV2 = tracker.currentBilibiliTidV2
         fullUrl = tracker.currentDomain == "bilibili.com" ? nil : tracker.currentFullUrl
-        let identityFullURL = tracker.currentDomain == "bilibili.com" ? nil : fullUrl
+        // identity 只表达“应该合并到哪一类累计里”：
+        // - 普通网站：按域名累计
+        // - B站：按 BV 号累计
+        // - 本地应用：按 appName + groupedTitle 累计
         identity = SessionIdentity(
             appName: appName,
             groupedTitle: groupedTitle,
             domain: domain,
-            bilibiliIdentifier: bilibiliIdentifier,
-            fullUrl: identityFullURL
+            bilibiliIdentifier: bilibiliIdentifier
         )
     }
 }
