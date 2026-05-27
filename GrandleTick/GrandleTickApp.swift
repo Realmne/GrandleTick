@@ -72,6 +72,8 @@ final class StatusBarController: NSObject {
     private let modelContext: ModelContext
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
+    private var localEventMonitor: Any?
+    private var globalEventMonitor: Any?
 
     init(usageManager: UsageManager, modelContext: ModelContext) {
         self.usageManager = usageManager
@@ -79,7 +81,20 @@ final class StatusBarController: NSObject {
         super.init()
         configureStatusItem()
         configurePopover()
+        installPopoverCloseHandlers()
         bindUsageManager()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+
+        if let localEventMonitor {
+            NSEvent.removeMonitor(localEventMonitor)
+        }
+
+        if let globalEventMonitor {
+            NSEvent.removeMonitor(globalEventMonitor)
+        }
     }
 
     private func configureStatusItem() {
@@ -93,12 +108,30 @@ final class StatusBarController: NSObject {
 
     private func configurePopover() {
         popover.behavior = .transient
-        popover.animates = true
+        popover.animates = false
         popover.contentSize = NSSize(width: 320, height: 420)
         popover.contentViewController = NSHostingController(
             rootView: ContentView(usageManager: usageManager)
                 .modelContext(modelContext)
         )
+    }
+
+    private func installPopoverCloseHandlers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            self?.closePopoverIfNeeded(for: event)
+            return event
+        }
+
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            self?.closePopover()
+        }
     }
 
     private func bindUsageManager() {
@@ -114,6 +147,11 @@ final class StatusBarController: NSObject {
     }
 
     @objc
+    private func handleApplicationDidResignActive() {
+        closePopover()
+    }
+
+    @objc
     private func togglePopover(_ sender: AnyObject?) {
         guard let button = statusItem.button else { return }
 
@@ -121,7 +159,21 @@ final class StatusBarController: NSObject {
             popover.performClose(sender)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            popover.contentViewController?.view.window?.animationBehavior = .none
         }
+    }
+
+    private func closePopoverIfNeeded(for event: NSEvent) {
+        guard popover.isShown else { return }
+        guard let popoverWindow = popover.contentViewController?.view.window else { return }
+
+        if event.window !== popoverWindow {
+            popover.performClose(nil)
+        }
+    }
+
+    private func closePopover() {
+        guard popover.isShown else { return }
+        popover.performClose(nil)
     }
 }

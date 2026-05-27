@@ -7,6 +7,7 @@ struct ContentView: View {
     
     static var statisticsWindow: NSWindow?
     static var whitelistWindow: NSWindow?
+    static var reportWindow: NSWindow?
     
     private let requiredConfirmText = "我已知晓"
     
@@ -129,6 +130,13 @@ struct ContentView: View {
                 )
 
                 ActionCapsuleButton(
+                    title: "查看周/月/年报告",
+                    systemImage: "book.closed.fill",
+                    tint: .indigo,
+                    action: openReportWindow
+                )
+
+                ActionCapsuleButton(
                     title: "清空所有历史数据",
                     systemImage: "trash.fill",
                     tint: .red.opacity(0.8),
@@ -207,6 +215,39 @@ struct ContentView: View {
         
         ContentView.statisticsWindow = statisticsWindow
         statisticsWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func openReportWindow() {
+        if let existingWindow = ContentView.reportWindow {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let reportWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 860, height: 680),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        reportWindow.title = "学习报告"
+        reportWindow.center()
+        reportWindow.isReleasedWhenClosed = false
+        reportWindow.titlebarAppearsTransparent = false
+        reportWindow.titleVisibility = .hidden
+        reportWindow.minSize = NSSize(width: 860, height: 640)
+        reportWindow.contentView = NSHostingView(rootView: ReportView().modelContext(modelContext))
+
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: reportWindow, queue: .main) { _ in
+            if ContentView.reportWindow === reportWindow {
+                ContentView.reportWindow = nil
+            }
+        }
+
+        ContentView.reportWindow = reportWindow
+        reportWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
     
