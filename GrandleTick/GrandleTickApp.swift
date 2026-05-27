@@ -23,6 +23,7 @@ struct GrandleTickApp: App {
             let configuration = ModelConfiguration(url: databaseFileURL)
 
             container = try ModelContainer(for: ActivityLog.self, configurations: configuration)
+            ActivityLogIndexInstaller.installIfNeeded(databaseURL: databaseFileURL)
 
             let context = container.mainContext
             LegacyStoreMigrator.migrateIfNeeded(context: context, appDirectoryURL: applicationDirectoryURL)

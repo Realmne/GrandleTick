@@ -4,7 +4,6 @@ import Charts
 
 struct StatisticsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \ActivityLog.startTime, order: .reverse) private var allLogs: [ActivityLog]
 
     @State private var whitelist = WhitelistManager.shared
     @State private var selectedRange: StatisticsRange = .last7Days
@@ -114,7 +113,9 @@ struct StatisticsView: View {
         .frame(width: 640, height: 760)
         .ignoresSafeArea(.all, edges: .top)
         .onAppear { refreshRangeData() }
-        .onChange(of: allLogs) { _, _ in refreshRangeData() }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            refreshRangeData()
+        }
         .onChange(of: whitelist.whitelistedApps) { _, _ in refreshRangeData() }
         .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshRangeData() }
         .onChange(of: selectedRange) { _, _ in refreshRangeData() }
@@ -375,10 +376,10 @@ struct StatisticsView: View {
         filterComputationTask?.cancel()
 
         let whitelistSnapshot = WhitelistSnapshot(whitelist: whitelist)
-        let newRangeLogs = allLogs.compactMap { log in
+        let sourceLogs = fetchLogsForSelectedRange()
+        let newRangeLogs = sourceLogs.compactMap { log in
             PreparedLog(log: log, whitelist: whitelistSnapshot, calendar: calendar)
         }
-        .filter { selectedRange.contains($0.startTime, calendar: calendar) }
 
         baseRangeLogs = newRangeLogs
         appFilterOptions = buildFilterOptions(from: newRangeLogs, dimension: .app)
@@ -532,12 +533,10 @@ struct StatisticsView: View {
 
         let whitelistSnapshot = WhitelistSnapshot(whitelist: whitelist)
         let filters = activeFilters()
+        let sourceLogs = fetchLogsForSelectedRange()
 
-        let logsToDelete = allLogs.compactMap { log -> (ActivityLog, PreparedLog)? in
+        let logsToDelete = sourceLogs.compactMap { log -> (ActivityLog, PreparedLog)? in
             guard let prepared = PreparedLog(log: log, whitelist: whitelistSnapshot, calendar: calendar) else {
-                return nil
-            }
-            guard selectedRange.contains(prepared.startTime, calendar: calendar) else {
                 return nil
             }
             guard calendar.isDate(prepared.startTime, inSameDayAs: selectedDay) else {
@@ -570,6 +569,16 @@ struct StatisticsView: View {
 
         try? modelContext.save()
         refreshRangeData()
+    }
+
+    private func fetchLogsForSelectedRange() -> [ActivityLog] {
+        do {
+            let descriptor = selectedRange.fetchDescriptor(calendar: calendar)
+            return try modelContext.fetch(descriptor)
+        } catch {
+            print("[Statistics] Failed to fetch logs: \(error.localizedDescription)")
+            return []
+        }
     }
 
     private func updateSelectedDay(_ day: Date) {
@@ -710,24 +719,51 @@ private enum StatisticsRange: String, CaseIterable, Identifiable, Sendable {
     }
 
     func contains(_ date: Date, calendar: Calendar) -> Bool {
-        let startOfToday = calendar.startOfDay(for: Date())
+        guard let interval = interval(containing: Date(), calendar: calendar) else {
+            return true
+        }
+        return interval.contains(date)
+    }
+
+    func interval(containing now: Date, calendar: Calendar) -> DateInterval? {
+        let startOfToday = calendar.startOfDay(for: now)
 
         switch self {
         case .today:
-            return calendar.isDate(date, inSameDayAs: startOfToday)
+            let end = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now
+            return DateInterval(start: startOfToday, end: end)
         case .last7Days:
             guard let startDate = calendar.date(byAdding: .day, value: -6, to: startOfToday) else {
-                return true
+                return nil
             }
-            return date >= startDate
+            let end = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now
+            return DateInterval(start: startDate, end: end)
         case .last30Days:
             guard let startDate = calendar.date(byAdding: .day, value: -29, to: startOfToday) else {
-                return true
+                return nil
             }
-            return date >= startDate
+            let end = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now
+            return DateInterval(start: startDate, end: end)
         case .all:
-            return true
+            return nil
         }
+    }
+
+    func fetchDescriptor(calendar: Calendar) -> FetchDescriptor<ActivityLog> {
+        let sortBy = [SortDescriptor(\ActivityLog.startTime, order: .reverse)]
+
+        guard let interval = interval(containing: Date(), calendar: calendar) else {
+            return FetchDescriptor<ActivityLog>(sortBy: sortBy)
+        }
+
+        let start = interval.start
+        let end = interval.end
+        return FetchDescriptor<ActivityLog>(
+            predicate: #Predicate { log in
+                log.startTime >= start && log.startTime < end
+            },
+            sortBy: sortBy
+        )
     }
 }
 

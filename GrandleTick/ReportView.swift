@@ -3,7 +3,7 @@ import SwiftData
 import Charts
 
 struct ReportView: View {
-    @Query(sort: \ActivityLog.startTime, order: .reverse) private var allLogs: [ActivityLog]
+    @Environment(\.modelContext) private var modelContext
 
     @State private var whitelist = WhitelistManager.shared
     @State private var selectedPeriod: ReportPeriod = .week
@@ -51,7 +51,9 @@ struct ReportView: View {
             transaction.animation = nil
         }
         .onAppear(perform: refreshSnapshot)
-        .onChange(of: allLogs) { _, _ in refreshSnapshot() }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            refreshSnapshot()
+        }
         .onChange(of: whitelist.whitelistedApps) { _, _ in refreshSnapshot() }
         .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshSnapshot() }
         .onChange(of: selectedPeriod) { _, _ in
@@ -78,107 +80,89 @@ struct ReportView: View {
     @ViewBuilder
     private func pageView(for snapshot: ReportSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            ZStack(alignment: .topLeading) {
-                preloadedPage(.cover) {
-                    ReportCoverPage(
-                        snapshot: snapshot,
-                        formatDuration: formatDetailedDuration,
-                        formatDateRange: formatDateRange,
-                        header: AnyView(
-                            ReportPageHeader(
-                                selectedPeriod: $selectedPeriod,
-                                rangeText: formatDateRange(snapshot.interval),
-                                label: "总览",
-                                title: snapshot.period.reportTitle,
-                                subtitle: nil,
-                                pager: AnyView(headerPager)
-                            )
+            switch selectedPage {
+            case .cover:
+                ReportCoverPage(
+                    snapshot: snapshot,
+                    formatDuration: formatDetailedDuration,
+                    formatDateRange: formatDateRange,
+                    header: AnyView(
+                        ReportPageHeader(
+                            selectedPeriod: $selectedPeriod,
+                            rangeText: formatDateRange(snapshot.interval),
+                            label: "总览",
+                            title: snapshot.period.reportTitle,
+                            subtitle: nil,
+                            pager: AnyView(headerPager)
                         )
                     )
-                }
-
-                preloadedPage(.appChampion) {
-                    ReportAppChampionPage(
-                        snapshot: snapshot,
-                        formatDuration: formatCompactDuration,
-                        header: AnyView(
-                            ReportPageHeader(
-                                selectedPeriod: $selectedPeriod,
-                                rangeText: formatDateRange(snapshot.interval),
-                                label: "热度最高 App",
-                                title: snapshot.topApps.first.map { "热度最高的 App 是 \($0.name)" } ?? "热度最高 App",
-                                subtitle: snapshot.topApps.isEmpty ? nil : snapshot.appFocusSummary,
-                                pager: AnyView(headerPager)
-                            )
+                )
+            case .appChampion:
+                ReportAppChampionPage(
+                    snapshot: snapshot,
+                    formatDuration: formatCompactDuration,
+                    header: AnyView(
+                        ReportPageHeader(
+                            selectedPeriod: $selectedPeriod,
+                            rangeText: formatDateRange(snapshot.interval),
+                            label: "热度最高 App",
+                            title: snapshot.topApps.first.map { "热度最高的 App 是 \($0.name)" } ?? "热度最高 App",
+                            subtitle: snapshot.topApps.isEmpty ? nil : snapshot.appFocusSummary,
+                            pager: AnyView(headerPager)
                         )
                     )
-                }
-
-                preloadedPage(.sources) {
-                    ReportSourcesPage(
-                        snapshot: snapshot,
-                        formatDuration: formatCompactDuration,
-                        header: AnyView(
-                            ReportPageHeader(
-                                selectedPeriod: $selectedPeriod,
-                                rangeText: formatDateRange(snapshot.interval),
-                                label: "常看内容",
-                                title: "这段时间你主要在看什么",
-                                subtitle: "网站和 PDF 会放在一起看",
-                                pager: AnyView(headerPager)
-                            )
+                )
+            case .sources:
+                ReportSourcesPage(
+                    snapshot: snapshot,
+                    formatDuration: formatCompactDuration,
+                    header: AnyView(
+                        ReportPageHeader(
+                            selectedPeriod: $selectedPeriod,
+                            rangeText: formatDateRange(snapshot.interval),
+                            label: "常看内容",
+                            title: "这段时间你主要在看什么",
+                            subtitle: "网站和 PDF 会放在一起看",
+                            pager: AnyView(headerPager)
                         )
                     )
-                }
-
-                preloadedPage(.peakDay) {
-                    ReportPeakDayPage(
-                        snapshot: snapshot,
-                        formatDuration: formatCompactDuration,
-                        formatDay: formatLongDate,
-                        header: AnyView(
-                            ReportPageHeader(
-                                selectedPeriod: $selectedPeriod,
-                                rangeText: formatDateRange(snapshot.interval),
-                                label: "高峰日",
-                                title: snapshot.strongestDay.map { "\(formatLongDate($0.date)) 是你学得最久的一天" } ?? "高峰日",
-                                subtitle: snapshot.strongestDay.map { "这一天一共学了 \(formatCompactDuration($0.totalTime))" },
-                                pager: AnyView(headerPager)
-                            )
+                )
+            case .peakDay:
+                ReportPeakDayPage(
+                    snapshot: snapshot,
+                    formatDuration: formatCompactDuration,
+                    formatDay: formatLongDate,
+                    header: AnyView(
+                        ReportPageHeader(
+                            selectedPeriod: $selectedPeriod,
+                            rangeText: formatDateRange(snapshot.interval),
+                            label: "高峰日",
+                            title: snapshot.strongestDay.map { "\(formatLongDate($0.date)) 是你学得最久的一天" } ?? "高峰日",
+                            subtitle: snapshot.strongestDay.map { "这一天一共学了 \(formatCompactDuration($0.totalTime))" },
+                            pager: AnyView(headerPager)
                         )
                     )
-                }
-
-                preloadedPage(.rhythm) {
-                    ReportRhythmPage(
-                        snapshot: snapshot,
-                        formatDuration: formatCompactDuration,
-                        formatDay: formatShortDate,
-                        formatLongDay: formatLongDate,
-                        formatClock: formatClock,
-                        header: AnyView(
-                            ReportPageHeader(
-                                selectedPeriod: $selectedPeriod,
-                                rangeText: formatDateRange(snapshot.interval),
-                                label: "学习节奏",
-                                title: "学习节奏",
-                                subtitle: "看看你通常在什么时间进入状态",
-                                pager: AnyView(headerPager)
-                            )
+                )
+            case .rhythm:
+                ReportRhythmPage(
+                    snapshot: snapshot,
+                    formatDuration: formatCompactDuration,
+                    formatDay: formatShortDate,
+                    formatLongDay: formatLongDate,
+                    formatClock: formatClock,
+                    header: AnyView(
+                        ReportPageHeader(
+                            selectedPeriod: $selectedPeriod,
+                            rangeText: formatDateRange(snapshot.interval),
+                            label: "学习节奏",
+                            title: "学习节奏",
+                            subtitle: "看看你通常在什么时间进入状态",
+                            pager: AnyView(headerPager)
                         )
                     )
-                }
+                )
             }
         }
-    }
-
-    @ViewBuilder
-    private func preloadedPage<Content: View>(_ page: ReportPage, @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .opacity(selectedPage == page ? 1 : 0)
-            .allowsHitTesting(selectedPage == page)
-            .accessibilityHidden(selectedPage != page)
-            .zIndex(selectedPage == page ? 1 : 0)
     }
 
     private var emptyStateView: some View {
@@ -199,13 +183,36 @@ struct ReportView: View {
     }
 
     private func refreshSnapshot() {
+        let logs = fetchLogsForSelectedPeriod()
         snapshot = ReportBuilder.build(
             period: selectedPeriod,
-            logs: allLogs,
+            logs: logs,
             whitelist: whitelist,
             now: Date(),
             calendar: calendar
         )
+    }
+
+    private func fetchLogsForSelectedPeriod() -> [ActivityLog] {
+        let now = Date()
+        let currentInterval = selectedPeriod.interval(containing: now, calendar: calendar)
+        let previousInterval = selectedPeriod.previousInterval(before: currentInterval, calendar: calendar)
+        let start = previousInterval?.start ?? currentInterval.start
+        let end = currentInterval.end
+
+        let descriptor = FetchDescriptor<ActivityLog>(
+            predicate: #Predicate { log in
+                log.startTime >= start && log.startTime < end
+            },
+            sortBy: [SortDescriptor(\ActivityLog.startTime, order: .reverse)]
+        )
+
+        do {
+            return try modelContext.fetch(descriptor)
+        } catch {
+            print("[Report] Failed to fetch logs: \(error.localizedDescription)")
+            return []
+        }
     }
 
     private func showPreviousPage() {
