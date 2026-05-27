@@ -55,7 +55,6 @@ struct ReportView: View {
         .onChange(of: whitelist.whitelistedApps) { _, _ in refreshSnapshot() }
         .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshSnapshot() }
         .onChange(of: selectedPeriod) { _, _ in
-            selectedPage = .cover
             refreshSnapshot()
         }
     }
@@ -251,11 +250,13 @@ struct ReportView: View {
     }
 
     private func formatShortDate(_ date: Date) -> String {
-        date.formatted(.dateTime.month(.defaultDigits).day())
+        let components = calendar.dateComponents([.month, .day], from: date)
+        return "\(components.month ?? 0)/\(components.day ?? 0)"
     }
 
     private func formatLongDate(_ date: Date) -> String {
-        date.formatted(.dateTime.year().month(.defaultDigits).day())
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return "\(components.year ?? 0)年\(components.month ?? 0)月\(components.day ?? 0)日"
     }
 
     private func formatDateRange(_ interval: DateInterval) -> String {
@@ -564,11 +565,13 @@ private struct ReportPeakDayPage: View {
     }
 
     private func axisLabel(for date: Date) -> String {
+        let components = Calendar.current.dateComponents([.month, .day], from: date)
+
         switch snapshot.trendGranularity {
         case .day:
-            return date.formatted(.dateTime.month(.defaultDigits).day())
+            return "\(components.month ?? 0)/\(components.day ?? 0)"
         case .month:
-            return date.formatted(.dateTime.month(.abbreviated))
+            return "\(components.month ?? 0)月"
         }
     }
 
