@@ -328,5 +328,7 @@ private struct ActionCapsuleButton: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(false)
+        .focusEffectDisabled()
     }
 }
