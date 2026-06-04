@@ -5,12 +5,13 @@ enum ReportBuilder {
         period: ReportPeriod,
         logs: [ActivityLog],
         whitelist: WhitelistManager,
+        referenceDate: Date? = nil,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> ReportSnapshot {
         let whitelistSnapshot = ReportWhitelistSnapshot(whitelist: whitelist)
         let preparedLogs = logs.compactMap { ReportPreparedLog(log: $0, whitelist: whitelistSnapshot, calendar: calendar) }
-        let naturalInterval = period.interval(containing: now, calendar: calendar)
+        let naturalInterval = period.reportInterval(containing: referenceDate ?? now, currentDate: now, calendar: calendar)
 
         let currentLogs = preparedLogs.filter { naturalInterval.contains($0.startTime) }
         let interval = adjustedInterval(

@@ -7,6 +7,7 @@ struct ReportView: View {
 
     @State private var whitelist = WhitelistManager.shared
     @State private var selectedPeriod: ReportPeriod = .week
+    @State private var selectedReferenceDate = Date()
     @State private var selectedPage: ReportPage = .cover
     @State private var snapshot: ReportSnapshot?
 
@@ -77,6 +78,13 @@ struct ReportView: View {
         }
     }
 
+    private var canShowNextPeriod: Bool {
+        let now = Date()
+        let selectedInterval = selectedPeriod.reportInterval(containing: selectedReferenceDate, currentDate: now, calendar: calendar)
+        let currentInterval = selectedPeriod.reportInterval(containing: now, currentDate: now, calendar: calendar)
+        return selectedInterval.start < currentInterval.start
+    }
+
     @ViewBuilder
     private func pageView(for snapshot: ReportSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -90,6 +98,9 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowNextPeriod: canShowNextPeriod,
+                            previousPeriod: showPreviousPeriod,
+                            nextPeriod: showNextPeriod,
                             label: "总览",
                             title: snapshot.period.reportTitle,
                             subtitle: nil,
@@ -105,6 +116,9 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowNextPeriod: canShowNextPeriod,
+                            previousPeriod: showPreviousPeriod,
+                            nextPeriod: showNextPeriod,
                             label: "热度最高 App",
                             title: snapshot.topApps.first.map { "热度最高的 App 是 \($0.name)" } ?? "热度最高 App",
                             subtitle: snapshot.topApps.isEmpty ? nil : snapshot.appFocusSummary,
@@ -120,6 +134,9 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowNextPeriod: canShowNextPeriod,
+                            previousPeriod: showPreviousPeriod,
+                            nextPeriod: showNextPeriod,
                             label: "常看内容",
                             title: "这段时间你主要在看什么",
                             subtitle: "网站和 PDF 会放在一起看",
@@ -136,6 +153,9 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowNextPeriod: canShowNextPeriod,
+                            previousPeriod: showPreviousPeriod,
+                            nextPeriod: showNextPeriod,
                             label: "高峰日",
                             title: snapshot.strongestDay.map { "\(formatLongDate($0.date)) 是你学得最久的一天" } ?? "高峰日",
                             subtitle: snapshot.strongestDay.map { "这一天一共学了 \(formatCompactDuration($0.totalTime))" },
@@ -154,6 +174,9 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowNextPeriod: canShowNextPeriod,
+                            previousPeriod: showPreviousPeriod,
+                            nextPeriod: showNextPeriod,
                             label: "学习节奏",
                             title: "学习节奏",
                             subtitle: "看看你通常在什么时间进入状态",
@@ -188,6 +211,7 @@ struct ReportView: View {
             period: selectedPeriod,
             logs: logs,
             whitelist: whitelist,
+            referenceDate: selectedReferenceDate,
             now: Date(),
             calendar: calendar
         )
@@ -195,7 +219,7 @@ struct ReportView: View {
 
     private func fetchLogsForSelectedPeriod() -> [ActivityLog] {
         let now = Date()
-        let currentInterval = selectedPeriod.interval(containing: now, calendar: calendar)
+        let currentInterval = selectedPeriod.reportInterval(containing: selectedReferenceDate, currentDate: now, calendar: calendar)
         let previousInterval = selectedPeriod.previousInterval(before: currentInterval, calendar: calendar)
         let start = previousInterval?.start ?? currentInterval.start
         let end = currentInterval.end
@@ -213,6 +237,38 @@ struct ReportView: View {
             print("[Report] Failed to fetch logs: \(error.localizedDescription)")
             return []
         }
+    }
+
+    private func showPreviousPeriod() {
+        shiftSelectedPeriod(by: -1)
+    }
+
+    private func showNextPeriod() {
+        guard canShowNextPeriod else { return }
+        shiftSelectedPeriod(by: 1)
+    }
+
+    private func shiftSelectedPeriod(by value: Int) {
+        let component: Calendar.Component
+
+        switch selectedPeriod {
+        case .week:
+            component = .weekOfYear
+        case .month:
+            component = .month
+        case .year:
+            component = .year
+        }
+
+        // 1. 根据当前选中的报告粒度决定移动单位，保证周、月、年切换语义一致。
+        // 2. 移动参考日期后重新生成快照，让报告内容、趋势和同比对比同步更新。
+        // 3. 如果日历计算失败，则保持当前报告不变，避免 UI 跳到不可解释的状态。
+        guard let nextDate = calendar.date(byAdding: component, value: value, to: selectedReferenceDate) else {
+            return
+        }
+
+        selectedReferenceDate = nextDate
+        refreshSnapshot()
     }
 
     private func showPreviousPage() {
@@ -361,6 +417,9 @@ private struct ReportCoverPage: View {
 private struct ReportPageHeader: View {
     @Binding var selectedPeriod: ReportPeriod
     let rangeText: String
+    let canShowNextPeriod: Bool
+    let previousPeriod: () -> Void
+    let nextPeriod: () -> Void
     let label: String
     let title: String
     let subtitle: String?
@@ -386,9 +445,24 @@ private struct ReportPageHeader: View {
 
                 Spacer()
 
-                Text(rangeText)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    ReportPagerButton(
+                        systemImage: "chevron.left",
+                        isDisabled: false,
+                        action: previousPeriod
+                    )
+
+                    Text(rangeText)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .frame(minWidth: 96)
+
+                    ReportPagerButton(
+                        systemImage: "chevron.right",
+                        isDisabled: !canShowNextPeriod,
+                        action: nextPeriod
+                    )
+                }
 
                 pager
             }
