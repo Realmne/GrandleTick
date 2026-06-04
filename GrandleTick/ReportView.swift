@@ -10,6 +10,7 @@ struct ReportView: View {
     @State private var selectedReferenceDate = Date()
     @State private var selectedPage: ReportPage = .cover
     @State private var snapshot: ReportSnapshot?
+    @State private var canShowPreviousPeriod = false
 
     private let calendar = Calendar.current
 
@@ -38,7 +39,13 @@ struct ReportView: View {
                             }
                             .scrollIndicators(.hidden)
                         } else {
-                            emptyStateView
+                            ScrollView {
+                                emptyStateView(for: snapshot)
+                                    .padding(.horizontal, 28)
+                                    .padding(.top, 20)
+                                    .padding(.bottom, 28)
+                            }
+                            .scrollIndicators(.hidden)
                         }
                     } else {
                         ProgressView()
@@ -98,6 +105,7 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowPreviousPeriod: canShowPreviousPeriod,
                             canShowNextPeriod: canShowNextPeriod,
                             previousPeriod: showPreviousPeriod,
                             nextPeriod: showNextPeriod,
@@ -116,6 +124,7 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowPreviousPeriod: canShowPreviousPeriod,
                             canShowNextPeriod: canShowNextPeriod,
                             previousPeriod: showPreviousPeriod,
                             nextPeriod: showNextPeriod,
@@ -134,6 +143,7 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowPreviousPeriod: canShowPreviousPeriod,
                             canShowNextPeriod: canShowNextPeriod,
                             previousPeriod: showPreviousPeriod,
                             nextPeriod: showNextPeriod,
@@ -153,6 +163,7 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowPreviousPeriod: canShowPreviousPeriod,
                             canShowNextPeriod: canShowNextPeriod,
                             previousPeriod: showPreviousPeriod,
                             nextPeriod: showNextPeriod,
@@ -174,6 +185,7 @@ struct ReportView: View {
                         ReportPageHeader(
                             selectedPeriod: $selectedPeriod,
                             rangeText: formatDateRange(snapshot.interval),
+                            canShowPreviousPeriod: canShowPreviousPeriod,
                             canShowNextPeriod: canShowNextPeriod,
                             previousPeriod: showPreviousPeriod,
                             nextPeriod: showNextPeriod,
@@ -188,42 +200,61 @@ struct ReportView: View {
         }
     }
 
-    private var emptyStateView: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            Image(systemName: "book.closed.circle")
-                .font(.system(size: 46, weight: .light))
-                .foregroundColor(.secondary.opacity(0.45))
-            Text("\(selectedPeriod.title)还没有学习记录")
-                .font(.system(size: 22, weight: .bold))
-            Text("切换到白名单内的应用或网站后，这里会自动整理出 5 页回顾。")
-                .font(.callout)
-                .foregroundColor(.secondary)
-            Spacer()
+    private func emptyStateView(for snapshot: ReportSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            ReportPageHeader(
+                selectedPeriod: $selectedPeriod,
+                rangeText: formatDateRange(snapshot.interval),
+                canShowPreviousPeriod: canShowPreviousPeriod,
+                canShowNextPeriod: canShowNextPeriod,
+                previousPeriod: showPreviousPeriod,
+                nextPeriod: showNextPeriod,
+                label: "总览",
+                title: snapshot.period.reportTitle,
+                subtitle: nil,
+                pager: AnyView(EmptyView())
+            )
+
+            VStack(spacing: 18) {
+                Spacer()
+                Image(systemName: "book.closed.circle")
+                    .font(.system(size: 46, weight: .light))
+                    .foregroundColor(.secondary.opacity(0.45))
+                Text("\(selectedPeriod.title)还没有学习记录")
+                    .font(.system(size: 22, weight: .bold))
+                Text("切换到白名单内的应用或网站后，这里会自动整理出 5 页回顾。")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, minHeight: 440)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 
     private func refreshSnapshot() {
-        let logs = fetchLogsForSelectedPeriod()
-        snapshot = ReportBuilder.build(
+        let now = Date()
+        let logs = fetchLogsForSelectedPeriod(currentDate: now)
+        let nextSnapshot = ReportBuilder.build(
             period: selectedPeriod,
             logs: logs,
             whitelist: whitelist,
             referenceDate: selectedReferenceDate,
-            now: Date(),
+            now: now,
             calendar: calendar
         )
+        snapshot = nextSnapshot
+        canShowPreviousPeriod = hasDataInPreviousPeriod(currentDate: now)
     }
 
-    private func fetchLogsForSelectedPeriod() -> [ActivityLog] {
-        let now = Date()
-        let currentInterval = selectedPeriod.reportInterval(containing: selectedReferenceDate, currentDate: now, calendar: calendar)
+    private func fetchLogsForSelectedPeriod(currentDate: Date) -> [ActivityLog] {
+        let currentInterval = selectedPeriod.reportInterval(containing: selectedReferenceDate, currentDate: currentDate, calendar: calendar)
         let previousInterval = selectedPeriod.previousInterval(before: currentInterval, calendar: calendar)
         let start = previousInterval?.start ?? currentInterval.start
-        let end = currentInterval.end
+        return fetchLogs(from: start, to: currentInterval.end)
+    }
 
+    private func fetchLogs(from start: Date, to end: Date) -> [ActivityLog] {
         let descriptor = FetchDescriptor<ActivityLog>(
             predicate: #Predicate { log in
                 log.startTime >= start && log.startTime < end
@@ -240,6 +271,7 @@ struct ReportView: View {
     }
 
     private func showPreviousPeriod() {
+        guard canShowPreviousPeriod else { return }
         shiftSelectedPeriod(by: -1)
     }
 
@@ -250,16 +282,7 @@ struct ReportView: View {
 
     private func shiftSelectedPeriod(by value: Int) {
         // 1. 先根据当前报告粒度确定要移动的日历单位。
-        let component: Calendar.Component
-
-        switch selectedPeriod {
-        case .week:
-            component = .weekOfYear
-        case .month:
-            component = .month
-        case .year:
-            component = .year
-        }
+        let component = reportCalendarComponent
 
         // 2. 再计算目标周期的参考日期，失败时保持当前报告不变。
         guard let nextDate = calendar.date(byAdding: component, value: value, to: selectedReferenceDate) else {
@@ -269,6 +292,42 @@ struct ReportView: View {
         // 3. 最后写回参考日期并刷新快照，让内容、趋势和对比数据同步更新。
         selectedReferenceDate = nextDate
         refreshSnapshot()
+    }
+
+    private func hasDataInPreviousPeriod(currentDate: Date) -> Bool {
+        guard let previousReferenceDate = calendar.date(byAdding: reportCalendarComponent, value: -1, to: selectedReferenceDate) else {
+            return false
+        }
+
+        // 1. 先定位上一期及其对比期，保证构建快照时仍能保留原来的同比计算能力。
+        let previousInterval = selectedPeriod.reportInterval(containing: previousReferenceDate, currentDate: currentDate, calendar: calendar)
+        let comparisonInterval = selectedPeriod.previousInterval(before: previousInterval, calendar: calendar)
+        let fetchStart = comparisonInterval?.start ?? previousInterval.start
+
+        // 2. 再按上一期参考日期构建临时快照，复用报告构建器的白名单和学习/娱乐过滤规则。
+        let logs = fetchLogs(from: fetchStart, to: previousInterval.end)
+        let previousSnapshot = ReportBuilder.build(
+            period: selectedPeriod,
+            logs: logs,
+            whitelist: whitelist,
+            referenceDate: previousReferenceDate,
+            now: currentDate,
+            calendar: calendar
+        )
+
+        // 3. 最后只允许切到真正有学习数据的周期，避免用户进入无法阅读的空报告页。
+        return previousSnapshot.hasData
+    }
+
+    private var reportCalendarComponent: Calendar.Component {
+        switch selectedPeriod {
+        case .week:
+            return .weekOfYear
+        case .month:
+            return .month
+        case .year:
+            return .year
+        }
     }
 
     private func showPreviousPage() {
@@ -417,6 +476,7 @@ private struct ReportCoverPage: View {
 private struct ReportPageHeader: View {
     @Binding var selectedPeriod: ReportPeriod
     let rangeText: String
+    let canShowPreviousPeriod: Bool
     let canShowNextPeriod: Bool
     let previousPeriod: () -> Void
     let nextPeriod: () -> Void
@@ -448,7 +508,7 @@ private struct ReportPageHeader: View {
                 HStack(spacing: 8) {
                     ReportPagerButton(
                         systemImage: "chevron.left",
-                        isDisabled: false,
+                        isDisabled: !canShowPreviousPeriod,
                         action: previousPeriod
                     )
 
