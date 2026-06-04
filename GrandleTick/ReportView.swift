@@ -249,6 +249,7 @@ struct ReportView: View {
     }
 
     private func shiftSelectedPeriod(by value: Int) {
+        // 1. 先根据当前报告粒度确定要移动的日历单位。
         let component: Calendar.Component
 
         switch selectedPeriod {
@@ -260,13 +261,12 @@ struct ReportView: View {
             component = .year
         }
 
-        // 1. 根据当前选中的报告粒度决定移动单位，保证周、月、年切换语义一致。
-        // 2. 移动参考日期后重新生成快照，让报告内容、趋势和同比对比同步更新。
-        // 3. 如果日历计算失败，则保持当前报告不变，避免 UI 跳到不可解释的状态。
+        // 2. 再计算目标周期的参考日期，失败时保持当前报告不变。
         guard let nextDate = calendar.date(byAdding: component, value: value, to: selectedReferenceDate) else {
             return
         }
 
+        // 3. 最后写回参考日期并刷新快照，让内容、趋势和对比数据同步更新。
         selectedReferenceDate = nextDate
         refreshSnapshot()
     }

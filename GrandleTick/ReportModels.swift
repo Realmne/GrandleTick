@@ -36,6 +36,7 @@ enum ReportPeriod: String, CaseIterable, Identifiable, Sendable {
     }
 
     func reportInterval(containing date: Date, currentDate: Date, calendar: Calendar) -> DateInterval {
+        // 1. 先取得参考日期所在的自然周、月或年区间。
         let naturalInterval: DateInterval
 
         switch self {
@@ -47,11 +48,11 @@ enum ReportPeriod: String, CaseIterable, Identifiable, Sendable {
             naturalInterval = calendar.dateInterval(of: .year, for: date) ?? DateInterval(start: calendar.startOfDay(for: date), duration: 365 * 24 * 3600)
         }
 
-        // 1. 历史周期展示完整自然区间，方便切换到过去的周、月、年查看完整报告。
-        // 2. 当前周期只展示到当前时间，避免趋势图和统计范围包含未来日期。
-        // 3. 未来周期不通过 UI 进入，这里仍兜底将结束时间限制到当前时间。
+        // 2. 判断参考日期是否落在当前周期或未来周期，用于决定是否截断结束时间。
         let currentNaturalInterval = naturalDateInterval(for: currentDate, calendar: calendar)
         let shouldCapToCurrentDate = naturalInterval.start >= currentNaturalInterval.start
+
+        // 3. 历史周期展示完整区间，当前周期只展示到当前时间，避免包含未来日期。
         let cappedEnd = shouldCapToCurrentDate ? min(naturalInterval.end, currentDate) : naturalInterval.end
         return DateInterval(start: naturalInterval.start, end: max(naturalInterval.start, cappedEnd))
     }
