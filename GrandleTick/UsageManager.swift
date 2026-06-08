@@ -14,10 +14,8 @@ final class UsageManager {
     private var trackingTimer: Timer?
     private var currentSession: ActiveSession?
     private var currentPersistedLog: ActivityLog?
-    private var currentLiveDuration: TimeInterval = 0
     private var currentBaselineTodayDuration: TimeInterval = 0
     private var currentBaselineHistoricalDuration: TimeInterval = 0
-    private var lastTickDate: Date?
     private let persistenceInterval: TimeInterval = 60
 
     init(modelContext: ModelContext? = nil) {
@@ -35,7 +33,6 @@ final class UsageManager {
 
     func startTracking() {
         trackingTimer?.invalidate()
-        lastTickDate = Date()
 
         trackingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -50,10 +47,7 @@ final class UsageManager {
     }
 
     private func handleTrackingTick(at now: Date) {
-        // 1. Timer 只负责持续累加当前会话时长，并作为系统事件漏发时的兜底刷新。
-        let delta = max(0, now.timeIntervalSince(lastTickDate ?? now))
-        lastTickDate = now
-
+        // 1. Timer 仍保留给秒级菜单栏显示，同时作为 AX/系统通知漏发时的兜底刷新。
         tracker.track()
         reconcileTrackedActivity(at: now)
 
@@ -63,25 +57,20 @@ final class UsageManager {
             return
         }
 
-        // 3. 已确认会话没有切换后，再按 tick 间隔累加展示时长和定期落库。
-        currentLiveDuration += delta
-        setDisplayedDurations(
-            today: currentBaselineTodayDuration + currentLiveDuration,
-            historical: currentBaselineHistoricalDuration + currentLiveDuration
-        )
+        // 3. 展示值由当前时刻减会话开始时刻派生出来，避免事件切换和 Timer tick 互相影响。
+        updateDisplayedDurations(at: now)
 
         if persistedLogNeedsCreation {
-            createPersistedLog()
+            createPersistedLog(endDate: now)
         } else if shouldPersistSession(at: now) {
             persistCurrentSession(forceSave: false, endDate: now)
         }
     }
 
     private func handleActivityChange(at now: Date) {
-        // 事件驱动路径只处理“对象已经变化”这件事，不做秒级累加；
-        // 否则下一次 Timer tick 会把同一段时间重复计入新会话。
-        lastTickDate = now
+        // 事件驱动路径只负责尽快结算/切换统计对象；显示值同样按时间差派生。
         reconcileTrackedActivity(at: now)
+        updateDisplayedDurations(at: now)
     }
 
     private func reconcileTrackedActivity(at now: Date) {
@@ -116,7 +105,7 @@ final class UsageManager {
     }
 
     private var persistedLogNeedsCreation: Bool {
-        currentSession != nil && currentPersistedLog == nil && currentLiveDuration > 0
+        currentSession != nil && currentPersistedLog == nil
     }
 
     private func shouldPersistSession(at now: Date) -> Bool {
@@ -145,7 +134,6 @@ final class UsageManager {
             fullUrl: trackedActivity.fullUrl
         )
         currentPersistedLog = nil
-        currentLiveDuration = 0
 
         let baseline = loadBaselineDurations(for: trackedActivity.identity, now: startDate)
         currentBaselineTodayDuration = baseline.today
@@ -153,14 +141,17 @@ final class UsageManager {
         setDisplayedDurations(today: baseline.today, historical: baseline.historical)
     }
 
-    private func createPersistedLog() {
+    private func createPersistedLog(endDate: Date) {
         guard let context = modelContext, let currentSession else { return }
+
+        let duration = currentSessionDuration(until: endDate)
+        guard duration > 0 else { return }
 
         let log = ActivityLog(
             appName: currentSession.appName,
             windowTitle: currentSession.groupedTitle,
             startTime: currentSession.startDate,
-            duration: currentLiveDuration,
+            duration: duration,
             domain: currentSession.domain,
             bilibiliIdentifier: currentSession.bilibiliIdentifier,
             bilibiliTidV2: currentSession.bilibiliTidV2,
@@ -185,14 +176,13 @@ final class UsageManager {
         }
 
         if currentPersistedLog == nil {
-            createPersistedLog()
+            createPersistedLog(endDate: endDate)
         }
 
         guard let currentPersistedLog else { return }
 
-        let roundedDuration = max(finalDuration, currentLiveDuration)
-        if forceSave || currentPersistedLog.duration != roundedDuration {
-            currentPersistedLog.duration = roundedDuration
+        if forceSave || currentPersistedLog.duration != finalDuration {
+            currentPersistedLog.duration = finalDuration
             currentPersistedLog.domain = currentSession.domain
             currentPersistedLog.bilibiliIdentifier = currentSession.bilibiliIdentifier
             currentPersistedLog.bilibiliTidV2 = currentSession.bilibiliTidV2
@@ -204,9 +194,21 @@ final class UsageManager {
     private func clearSessionState() {
         currentSession = nil
         currentPersistedLog = nil
-        currentLiveDuration = 0
         currentBaselineTodayDuration = 0
         currentBaselineHistoricalDuration = 0
+    }
+
+    private func currentSessionDuration(until date: Date) -> TimeInterval {
+        guard let currentSession else { return 0 }
+        return max(0, date.timeIntervalSince(currentSession.startDate))
+    }
+
+    private func updateDisplayedDurations(at date: Date) {
+        let duration = currentSessionDuration(until: date)
+        setDisplayedDurations(
+            today: currentBaselineTodayDuration + duration,
+            historical: currentBaselineHistoricalDuration + duration
+        )
     }
 
     private func loadBaselineDurations(for identity: SessionIdentity, now: Date) -> DurationBaseline {
