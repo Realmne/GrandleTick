@@ -22,6 +22,11 @@ final class UsageManager {
 
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
+        tracker.activityDidChange = { [weak self] in
+            Task { @MainActor in
+                self?.handleActivityChange(at: Date())
+            }
+        }
         tracker.track(forceRefresh: true)
         startSessionIfNeeded(at: Date())
         startTracking()
@@ -45,25 +50,21 @@ final class UsageManager {
     }
 
     private func handleTrackingTick(at now: Date) {
-        let delta = max(1, Int(round(now.timeIntervalSince(lastTickDate ?? now))))
+        // 1. Timer 只负责持续累加当前会话时长，并作为系统事件漏发时的兜底刷新。
+        let delta = max(0, now.timeIntervalSince(lastTickDate ?? now))
         lastTickDate = now
 
         tracker.track()
-        let trackedActivity = TrackedActivity(from: tracker)
+        reconcileTrackedActivity(at: now)
 
-        if trackedActivity?.identity != currentSession?.identity {
-            persistCurrentSession(forceSave: true, endDate: now)
-            clearSessionState()
-            setDisplayedDurations(today: 0, historical: 0)
-            startSessionIfNeeded(at: now)
-        }
-
+        // 2. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
         guard currentSession != nil else {
             publishMenuBarTitle()
             return
         }
 
-        currentLiveDuration += TimeInterval(delta)
+        // 3. 已确认会话没有切换后，再按 tick 间隔累加展示时长和定期落库。
+        currentLiveDuration += delta
         setDisplayedDurations(
             today: currentBaselineTodayDuration + currentLiveDuration,
             historical: currentBaselineHistoricalDuration + currentLiveDuration
@@ -73,6 +74,44 @@ final class UsageManager {
             createPersistedLog()
         } else if shouldPersistSession(at: now) {
             persistCurrentSession(forceSave: false, endDate: now)
+        }
+    }
+
+    private func handleActivityChange(at now: Date) {
+        // 事件驱动路径只处理“对象已经变化”这件事，不做秒级累加；
+        // 否则下一次 Timer tick 会把同一段时间重复计入新会话。
+        lastTickDate = now
+        reconcileTrackedActivity(at: now)
+    }
+
+    private func reconcileTrackedActivity(at now: Date) {
+        let trackedActivity = TrackedActivity(from: tracker)
+
+        // 1. 统计身份变化时立即收尾旧会话，并用事件发生时刻启动新会话。
+        if trackedActivity?.identity != currentSession?.identity {
+            persistCurrentSession(forceSave: true, endDate: now)
+            clearSessionState()
+            setDisplayedDurations(today: 0, historical: 0)
+            startSessionIfNeeded(at: now)
+            return
+        }
+
+        guard let trackedActivity, let currentSession else { return }
+
+        // 2. 普通网站可能在同一域名内切换页面，累计身份不变但 fullUrl 会更新；
+        // 这里保留最新 URL 供落库排查，同时不拆分累计口径。
+        if trackedActivity.fullUrl != currentSession.fullUrl
+            || trackedActivity.bilibiliTidV2 != currentSession.bilibiliTidV2 {
+            self.currentSession = ActiveSession(
+                identity: currentSession.identity,
+                startDate: currentSession.startDate,
+                appName: trackedActivity.appName,
+                groupedTitle: trackedActivity.groupedTitle,
+                domain: trackedActivity.domain,
+                bilibiliIdentifier: trackedActivity.bilibiliIdentifier,
+                bilibiliTidV2: trackedActivity.bilibiliTidV2,
+                fullUrl: trackedActivity.fullUrl
+            )
         }
     }
 

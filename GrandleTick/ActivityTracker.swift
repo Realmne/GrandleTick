@@ -20,6 +20,7 @@ final class ActivityTracker {
     var currentBilibiliId: String? = nil
     var currentBilibiliTidV2: Int? = nil
     var currentFullUrl: String? = nil
+    var activityDidChange: (() -> Void)?
 
     static var titleCache: [String: BrowserTitleData] = [:]
     static var bilibiliIdToMainTitleCache: [String: String] = [:]
@@ -37,17 +38,24 @@ final class ActivityTracker {
     private var pendingBrowserURLRefreshKeys: Set<BrowserURLRefreshKey> = []
     private var prefetchedBrowserURLResults: [BrowserURLRefreshKey: BrowserURLRefreshResult] = [:]
     private var pendingBilibiliMetadataRequests: Set<String> = []
+    private var activationObserver: NSObjectProtocol?
+    private var observedProcessId: pid_t?
+    private var activeAppObserver: AXObserver?
+    private var observedFocusedWindow: AXUIElement?
+    private var lastPublishedActivity: PublishedActivityState?
 
     init() {
         cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: true)
         track(forceRefresh: true)
 
-        NSWorkspace.shared.notificationCenter.addObserver(
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                // App 激活是系统能直接给到的最快信号；这里强制刷新，
+                // 让上层 UsageManager 不必等下一次计时器 tick 才切换会话。
                 self?.track(forceRefresh: true)
             }
         }
@@ -59,12 +67,14 @@ final class ActivityTracker {
     }
 
     func track(forceRefresh: Bool = false) {
+        // 1. 先用轻量节流保护兜底轮询路径；事件触发会传 forceRefresh，不能被节流挡住。
         let now = Date()
         if !forceRefresh && now.timeIntervalSince(lastTrackAt) < trackInterval {
             return
         }
         lastTrackAt = now
 
+        // 2. 辅助功能权限可能在系统设置里被用户改掉，事件驱动也需要定期重新确认。
         if now.timeIntervalSince(lastTrustCheckAt) >= trustRefreshInterval || forceRefresh {
             cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: false)
             lastTrustCheckAt = now
@@ -73,18 +83,22 @@ final class ActivityTracker {
         resetBrowserMetadata()
 
         guard let activeApp = NSWorkspace.shared.frontmostApplication else {
+            removeActiveAppObserver()
             clearTrackedState()
             return
         }
         if activeApp.bundleIdentifier == Bundle.main.bundleIdentifier {
+            removeActiveAppObserver()
             clearTrackedState()
             return
         }
 
         if !cachedAccessibilityTrusted {
+            removeActiveAppObserver()
             currentAppName = "权限受阻"
             currentWindowTitle = "需开启辅助功能权限"
             currentGroupedTitle = "需开启辅助功能权限"
+            publishActivityChangeIfNeeded()
             return
         }
 
@@ -99,9 +113,14 @@ final class ActivityTracker {
         }
 
         if !isWhitelistedApp {
+            removeActiveAppObserver()
             clearTrackedState()
             return
         }
+
+        // 3. 对当前前台 App 安装 AXObserver，补齐 NSWorkspace 只通知“应用切换”、
+        // 不通知“同一应用内切窗口/标题变化”的空白。
+        installActiveAppObserverIfNeeded(processId: processId)
 
         let isBrowserApp = bundleId.contains("Safari") || bundleId.contains("Chrome") || bundleId.contains("Edge")
         let isPreviewApp = bundleId == "com.apple.Preview" || appName == "预览"
@@ -110,9 +129,11 @@ final class ActivityTracker {
         var windowRef: CFTypeRef?
         let focusedWindowResult = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef)
         guard focusedWindowResult == .success, let windowElement = windowRef else {
+            observedFocusedWindow = nil
             clearTrackedState()
             return
         }
+        observeTitleChangesIfNeeded(for: windowElement as! AXUIElement)
 
         var titleRef: CFTypeRef?
         let titleResult = AXUIElementCopyAttributeValue(windowElement as! AXUIElement, kAXTitleAttribute as CFString, &titleRef)
@@ -383,6 +404,59 @@ final class ActivityTracker {
         }
     }
 
+    private func installActiveAppObserverIfNeeded(processId: pid_t) {
+        guard observedProcessId != processId else { return }
+        removeActiveAppObserver()
+
+        var observer: AXObserver?
+        let result = AXObserverCreate(processId, activityTrackerAXObserverCallback, &observer)
+        guard result == .success, let observer else { return }
+
+        let appElement = AXUIElementCreateApplication(processId)
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+
+        // 只监听会影响“当前统计对象”的通知：
+        // - 焦点窗口变化用于同一 App 内切文档/窗口；
+        // - 主窗口变化覆盖部分 App 不触发 focusedWindowChanged 的情况。
+        AXObserverAddNotification(observer, appElement, kAXFocusedWindowChangedNotification as CFString, context)
+        AXObserverAddNotification(observer, appElement, kAXMainWindowChangedNotification as CFString, context)
+
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+        observedProcessId = processId
+        activeAppObserver = observer
+    }
+
+    private func observeTitleChangesIfNeeded(for windowElement: AXUIElement) {
+        guard let activeAppObserver else { return }
+        if let observedFocusedWindow,
+           CFEqual(observedFocusedWindow, windowElement) {
+            return
+        }
+
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        if let observedFocusedWindow {
+            AXObserverRemoveNotification(activeAppObserver, observedFocusedWindow, kAXTitleChangedNotification as CFString)
+        }
+
+        // 窗口标题经常在页面加载、PDF 翻页或编辑器切文档后才稳定，
+        // 监听标题变化可以把轮询延迟压到系统通知触发时。
+        AXObserverAddNotification(activeAppObserver, windowElement, kAXTitleChangedNotification as CFString, context)
+        observedFocusedWindow = windowElement
+    }
+
+    private func removeActiveAppObserver() {
+        if let activeAppObserver {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(activeAppObserver), .commonModes)
+        }
+        observedProcessId = nil
+        activeAppObserver = nil
+        observedFocusedWindow = nil
+    }
+
+    fileprivate func handleAccessibilityEvent() {
+        track(forceRefresh: true)
+    }
+
     private func resolveBilibiliSnapshot(
         appName: String,
         bundleId: String,
@@ -533,6 +607,7 @@ final class ActivityTracker {
         currentGroupedTitle = ""
         resetBrowserMetadata()
         lastResolvedSnapshot = nil
+        publishActivityChangeIfNeeded()
     }
 
     private func applySnapshot(_ snapshot: TrackedSnapshot) {
@@ -544,6 +619,28 @@ final class ActivityTracker {
         currentBilibiliTidV2 = snapshot.bilibiliTidV2
         currentFullUrl = snapshot.fullUrl
         lastResolvedSnapshot = snapshot
+        publishActivityChangeIfNeeded()
+    }
+
+    private func publishActivityChangeIfNeeded() {
+        let currentActivity = PublishedActivityState(
+            appName: currentAppName,
+            groupedTitle: currentGroupedTitle,
+            domain: currentDomain,
+            bilibiliIdentifier: currentBilibiliId,
+            fullUrl: currentFullUrl
+        )
+        guard currentActivity != lastPublishedActivity else { return }
+        lastPublishedActivity = currentActivity
+        activityDidChange?()
+    }
+}
+
+private let activityTrackerAXObserverCallback: AXObserverCallback = { _, _, _, refcon in
+    guard let refcon else { return }
+    let tracker = Unmanaged<ActivityTracker>.fromOpaque(refcon).takeUnretainedValue()
+    Task { @MainActor in
+        tracker.handleAccessibilityEvent()
     }
 }
 
@@ -568,6 +665,14 @@ private struct BrowserURLRefreshKey: Hashable, Sendable {
 
 private struct BrowserURLRefreshResult: Sendable {
     let url: String?
+}
+
+private struct PublishedActivityState: Equatable {
+    let appName: String
+    let groupedTitle: String
+    let domain: String?
+    let bilibiliIdentifier: String?
+    let fullUrl: String?
 }
 
 private struct BilibiliVideoMetadata {
