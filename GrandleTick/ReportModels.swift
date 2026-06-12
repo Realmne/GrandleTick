@@ -124,6 +124,7 @@ struct ReportSnapshot: Sendable {
     let coverSummary: String
     let appFocusSummary: String
     let summaryLines: [String]
+    let hourlyDurations: [Double]
 
     var hasData: Bool {
         totalDuration > 0

@@ -67,6 +67,13 @@ enum ReportBuilder {
             comparison: comparison
         )
 
+        // 1. 统计24小时时段分布。因为用户关注学习在全天不同时段的专注度变化，这为“学习节奏”页面的24小时活跃度曲线提供底层数据。
+        var hourlyDurations = Array(repeating: 0.0, count: 24)
+        for log in currentStudyLogs {
+            let hour = calendar.component(.hour, from: log.startTime)
+            hourlyDurations[hour] += log.duration
+        }
+
         return ReportSnapshot(
             period: period,
             interval: interval,
@@ -92,7 +99,8 @@ enum ReportBuilder {
             comparison: comparison,
             coverSummary: coverSummary,
             appFocusSummary: appFocusSummary,
-            summaryLines: summaryLines
+            summaryLines: summaryLines,
+            hourlyDurations: hourlyDurations
         )
     }
 
