@@ -16,7 +16,6 @@ final class UsageManager {
     private var currentPersistedLog: ActivityLog?
     private var currentBaselineTodayDuration: TimeInterval = 0
     private var currentBaselineHistoricalDuration: TimeInterval = 0
-    private let persistenceInterval: TimeInterval = 60
 
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
@@ -46,18 +45,20 @@ final class UsageManager {
         persistCurrentSession(forceSave: true, endDate: Date())
     }
 
+    // 1. 处理计时器心跳。
+    // 每秒执行一次，用于刷新展示时长和定期同步到数据库。
     private func handleTrackingTick(at now: Date) {
-        // 1. Timer 仍保留给秒级菜单栏显示，同时作为 AX/系统通知漏发时的兜底刷新。
+        // (1) Timer 仍保留给秒级菜单栏显示，同时作为 AX/系统通知漏发时的兜底刷新。
         tracker.track()
         reconcileTrackedActivity(at: now)
 
-        // 2. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
+        // (2) 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
         guard currentSession != nil else {
             publishMenuBarTitle()
             return
         }
 
-        // 3. 展示值由当前时刻减会话开始时刻派生出来，避免事件切换和 Timer tick 互相影响。
+        // (3) 展示值由当前时刻减会话开始时刻派生出来，避免事件切换和 Timer tick 互相影响。
         updateDisplayedDurations(at: now)
 
         if persistedLogNeedsCreation {
@@ -67,16 +68,19 @@ final class UsageManager {
         }
     }
 
+    // 2. 处理活动状态变更。
+    // 当 AXObserver 检测到窗口或应用切换时触发，确保统计对象及时更新。
     private func handleActivityChange(at now: Date) {
-        // 事件驱动路径只负责尽快结算/切换统计对象；显示值同样按时间差派生。
         reconcileTrackedActivity(at: now)
         updateDisplayedDurations(at: now)
     }
 
+    // 3. 调和当前追踪到的活动。
+    // 判断是否需要结算旧会话并开启新会话。
     private func reconcileTrackedActivity(at now: Date) {
         let trackedActivity = TrackedActivity(from: tracker)
 
-        // 1. 统计身份变化时立即收尾旧会话，并用事件发生时刻启动新会话。
+        // (1) 统计身份变化时立即收尾旧会话，并用事件发生时刻启动新会话。
         if trackedActivity?.identity != currentSession?.identity {
             persistCurrentSession(forceSave: true, endDate: now)
             clearSessionState()
@@ -87,7 +91,7 @@ final class UsageManager {
 
         guard let trackedActivity, let currentSession else { return }
 
-        // 2. 普通网站可能在同一域名内切换页面，累计身份不变但 fullUrl 会更新；
+        // (2) 普通网站可能在同一域名内切换页面，累计身份不变但 fullUrl 会更新；
         // 这里保留最新 URL 供落库排查，同时不拆分累计口径。
         if trackedActivity.fullUrl != currentSession.fullUrl
             || trackedActivity.bilibiliTidV2 != currentSession.bilibiliTidV2 {
@@ -110,9 +114,10 @@ final class UsageManager {
 
     private func shouldPersistSession(at now: Date) -> Bool {
         guard let currentPersistedLog else { return false }
-        return now.timeIntervalSince(currentPersistedLog.startTime) - currentPersistedLog.duration >= persistenceInterval
+        return now.timeIntervalSince(currentPersistedLog.startTime) - currentPersistedLog.duration >= AppConfig.persistenceInterval
     }
 
+    // 4. 开启新会话并加载基准时长。
     private func startSessionIfNeeded(at startDate: Date) {
         guard let trackedActivity = TrackedActivity(from: tracker) else {
             clearSessionState()
@@ -120,9 +125,6 @@ final class UsageManager {
             return
         }
 
-        // currentSession 用于“当前这一次正在累计的对象”。
-        // 这里保留 fullUrl 只是为了落库留档，方便后续排查或扩展；
-        // 但累计口径本身不能依赖 fullUrl，否则普通网站会被按具体页面拆碎。
         currentSession = ActiveSession(
             identity: trackedActivity.identity,
             startDate: startDate,
@@ -211,6 +213,7 @@ final class UsageManager {
         )
     }
 
+    // 5. 从数据库加载基准时长，用于今日和历史统计显示。
     private func loadBaselineDurations(for identity: SessionIdentity, now: Date) -> DurationBaseline {
         guard let context = modelContext else { return .zero }
 
@@ -221,12 +224,7 @@ final class UsageManager {
         })
 
         let matchingLogs = ((try? context.fetch(descriptor)) ?? []).filter { log in
-            // 累计规则：
-            // 1. 普通网站按域名累计，不按 fullUrl / 会话链接累计。
-            // 2. B站是唯一例外，按 bilibiliIdentifier（BV号）区分不同视频。
-            // 3. 本地应用继续按 appName + groupedTitle 累计。
-            log.domain == identity.domain
-                && log.bilibiliIdentifier == identity.bilibiliIdentifier
+            log.domain == identity.domain && log.bilibiliIdentifier == identity.bilibiliIdentifier
         }
 
         let startOfDay = Calendar.current.startOfDay(for: now)
@@ -266,8 +264,6 @@ final class UsageManager {
 }
 
 private struct SessionIdentity: Hashable {
-    // 这是“累计身份”而不是“原始日志主键”。
-    // 不要把 fullUrl 放进这里；否则 ChatGPT、Google Docs 这类网站会被拆成每个页面单独累计。
     let appName: String
     let groupedTitle: String
     let domain: String?
@@ -295,10 +291,6 @@ private struct TrackedActivity {
         bilibiliIdentifier = tracker.currentBilibiliId
         bilibiliTidV2 = tracker.currentBilibiliTidV2
         fullUrl = tracker.currentDomain == "bilibili.com" ? nil : tracker.currentFullUrl
-        // identity 只表达“应该合并到哪一类累计里”：
-        // - 普通网站：按域名累计
-        // - B站：按 BV 号累计
-        // - 本地应用：按 appName + groupedTitle 累计
         identity = SessionIdentity(
             appName: appName,
             groupedTitle: groupedTitle,

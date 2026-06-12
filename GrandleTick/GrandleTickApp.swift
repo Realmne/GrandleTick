@@ -11,23 +11,27 @@ struct GrandleTickApp: App {
     @State private var usageManager: UsageManager
 
     init() {
+        // 1. 准备应用支持目录，用于存放 SQLite 数据库。
+        let applicationSupportDirectoryURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let applicationDirectoryURL = applicationSupportDirectoryURL.appendingPathComponent("GrandleTick", isDirectory: true)
+
+        if !FileManager.default.fileExists(atPath: applicationDirectoryURL.path) {
+            try? FileManager.default.createDirectory(at: applicationDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+        }
+
+        // 2. 初始化 SwiftData 容器并执行必要的数据库维护（索引安装、迁移、压缩）。
+        let databaseFileURL = applicationDirectoryURL.appendingPathComponent("ActivityData.sqlite")
+        let configuration = ModelConfiguration(url: databaseFileURL)
+
         do {
-            let applicationSupportDirectoryURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            let applicationDirectoryURL = applicationSupportDirectoryURL.appendingPathComponent("GrandleTick", isDirectory: true)
-
-            if !FileManager.default.fileExists(atPath: applicationDirectoryURL.path) {
-                try FileManager.default.createDirectory(at: applicationDirectoryURL, withIntermediateDirectories: true, attributes: nil)
-            }
-
-            let databaseFileURL = applicationDirectoryURL.appendingPathComponent("ActivityData.sqlite")
-            let configuration = ModelConfiguration(url: databaseFileURL)
-
             container = try ModelContainer(for: ActivityLog.self, configurations: configuration)
             ActivityLogIndexInstaller.installIfNeeded(databaseURL: databaseFileURL)
 
             let context = container.mainContext
             LegacyStoreMigrator.migrateIfNeeded(context: context, appDirectoryURL: applicationDirectoryURL)
             ActivityLogCompactor.compactIfNeeded(context: context, appDirectoryURL: applicationDirectoryURL)
+            
+            // 3. 初始化核心管理器并将上下文注入到 AppDelegate。
             let manager = UsageManager(modelContext: context)
             _usageManager = State(initialValue: manager)
             appDelegate.configure(usageManager: manager, modelContext: context)
@@ -110,7 +114,7 @@ final class StatusBarController: NSObject {
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = false
-        popover.contentSize = NSSize(width: 320, height: 420)
+        popover.contentSize = NSSize(width: AppConfig.popoverWidth, height: AppConfig.popoverHeight)
         popover.contentViewController = NSHostingController(
             rootView: ContentView(usageManager: usageManager)
                 .modelContext(modelContext)
@@ -118,6 +122,7 @@ final class StatusBarController: NSObject {
     }
 
     private func installPopoverCloseHandlers() {
+        // 1. 监听应用失去焦点，自动关闭弹出框。
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleApplicationDidResignActive),
@@ -125,11 +130,13 @@ final class StatusBarController: NSObject {
             object: nil
         )
 
+        // 2. 安装本地事件监听，处理弹出框外的点击。
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             self?.closePopoverIfNeeded(for: event)
             return event
         }
 
+        // 3. 安装全局事件监听，确保在其它应用点击时也能关闭。
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             self?.closePopover()
         }

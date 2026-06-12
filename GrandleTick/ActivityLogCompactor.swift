@@ -6,15 +6,21 @@ enum ActivityLogCompactor {
     private static let markerName = "ActivityLogCompaction.v1.completed"
     private static let mergeGapTolerance: TimeInterval = 75
 
+    // 1. 检查是否需要执行压缩。
+    // 如果存在标记文件，说明压缩已完成，直接跳过。
     static func compactIfNeeded(context: ModelContext, appDirectoryURL: URL) {
         let markerURL = appDirectoryURL.appendingPathComponent(markerName)
         if FileManager.default.fileExists(atPath: markerURL.path) {
             return
         }
 
+        // 2. 备份数据库以防万一。
+        // 在进行破坏性合并操作前，通过 SQLite 的 backup API 创建一个热备份。
         let databaseURL = appDirectoryURL.appendingPathComponent("ActivityData.sqlite")
         backupDatabaseIfPossible(databaseURL: databaseURL, appDirectoryURL: appDirectoryURL)
 
+        // 3. 扫描并合并相邻的相似日志。
+        // 判定条件：身份相同且时间跨度在 mergeGapTolerance 范围内。
         let descriptor = FetchDescriptor<ActivityLog>(sortBy: [SortDescriptor(\.startTime, order: .forward)])
         guard let logs = try? context.fetch(descriptor), logs.count > 1 else {
             try? "empty".write(to: markerURL, atomically: true, encoding: .utf8)
@@ -42,6 +48,7 @@ enum ActivityLogCompactor {
             }
         }
 
+        // 4. 持久化合并后的状态并记录压缩日志。
         if deletedCount > 0 {
             try? context.save()
         }

@@ -6,9 +6,6 @@ struct BrowserTitleData {
     let groupedTitle: String
 }
 
-private let bilibiliKnowledgeTidV2s: Set<Int> = [1010, 2084, 2085, 2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093, 2094, 2095]
-private let bilibiliEntertainmentTitle = "娱乐"
-
 @MainActor
 @Observable
 final class ActivityTracker {
@@ -25,10 +22,6 @@ final class ActivityTracker {
     static var titleCache: [String: BrowserTitleData] = [:]
     static var bilibiliIdToMainTitleCache: [String: String] = [:]
     private static var bilibiliMetadataCache: [String: BilibiliVideoMetadata] = [:]
-
-    private let trackInterval: TimeInterval = 2
-    private let browserURLRefreshInterval: TimeInterval = 5
-    private let trustRefreshInterval: TimeInterval = 15
 
     private var lastTrackAt: Date = .distantPast
     private var lastBrowserURLRefreshAt: Date = .distantPast
@@ -69,13 +62,13 @@ final class ActivityTracker {
     func track(forceRefresh: Bool = false) {
         // 1. 先用轻量节流保护兜底轮询路径；事件触发会传 forceRefresh，不能被节流挡住。
         let now = Date()
-        if !forceRefresh && now.timeIntervalSince(lastTrackAt) < trackInterval {
+        if !forceRefresh && now.timeIntervalSince(lastTrackAt) < AppConfig.trackInterval {
             return
         }
         lastTrackAt = now
 
         // 2. 辅助功能权限可能在系统设置里被用户改掉，事件驱动也需要定期重新确认。
-        if now.timeIntervalSince(lastTrustCheckAt) >= trustRefreshInterval || forceRefresh {
+        if now.timeIntervalSince(lastTrustCheckAt) >= AppConfig.trustRefreshInterval || forceRefresh {
             cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: false)
             lastTrustCheckAt = now
         }
@@ -122,7 +115,7 @@ final class ActivityTracker {
         // 不通知“同一应用内切窗口/标题变化”的空白。
         installActiveAppObserverIfNeeded(processId: processId)
 
-        let isBrowserApp = bundleId.contains("Safari") || bundleId.contains("Chrome") || bundleId.contains("Edge")
+        let isBrowserApp = BrowserService.isBrowserApp(bundleId: bundleId)
         let isPreviewApp = bundleId == "com.apple.Preview" || appName == "预览"
 
         let appRef = AXUIElementCreateApplication(processId)
@@ -222,7 +215,7 @@ final class ActivityTracker {
            lastResolvedSnapshot.processId == processId,
            lastResolvedSnapshot.rawTitle == rawTitle,
            !forceRefresh {
-            if now.timeIntervalSince(lastBrowserURLRefreshAt) < browserURLRefreshInterval {
+            if now.timeIntervalSince(lastBrowserURLRefreshAt) < AppConfig.browserURLRefreshInterval {
                 applySnapshot(lastResolvedSnapshot)
                 return
             }
@@ -232,7 +225,7 @@ final class ActivityTracker {
             return
         }
 
-        let browserUrl = Self.fetchBrowserUrl(appName: appName)
+        let browserUrl = BrowserService.fetchActiveURL(for: appName)
         lastBrowserURLRefreshAt = now
         applyResolvedBrowserSnapshot(
             appName: appName,
@@ -280,7 +273,7 @@ final class ActivityTracker {
                 displayTitle: cachedBrowserTitleData.displayTitle,
                 groupedTitle: cachedBrowserTitleData.groupedTitle,
                 domain: matchedWhitelistedDomain,
-                bilibiliIdentifier: matchedWhitelistedDomain == "bilibili.com" ? browserUrl.flatMap(extractBilibiliIdentifier) : nil,
+                bilibiliIdentifier: matchedWhitelistedDomain == "bilibili.com" ? browserUrl.flatMap(BilibiliService.extractIdentifier) : nil,
                 bilibiliTidV2: nil,
                 fullUrl: browserUrl
             )
@@ -306,7 +299,7 @@ final class ActivityTracker {
                 // - 展示标题尽量还原到具体视频
                 // - 后续累计时按 BV 号区分不同视频
                 // - 非知识类内容会在这里被归并到“娱乐”
-                bilibiliIdentifier = extractBilibiliIdentifier(from: currentBrowserUrl)
+                bilibiliIdentifier = BilibiliService.extractIdentifier(from: currentBrowserUrl)
                 if rawTitle.isEmpty || rawTitle.contains("无标题") || rawTitle.lowercased().contains("untitled") {
                     displayTitle = "网页加载中..."
                     groupedTitle = "网页加载中..."
@@ -387,7 +380,7 @@ final class ActivityTracker {
         pendingBrowserURLRefreshKeys.insert(refreshKey)
 
         Task.detached(priority: .utility) {
-            let browserUrl = Self.fetchBrowserUrl(appName: refreshKey.appName)
+            let browserUrl = BrowserService.fetchActiveURL(for: refreshKey.appName)
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -464,7 +457,7 @@ final class ActivityTracker {
         rawTitle: String,
         browserUrl: String
     ) {
-        guard let bilibiliIdentifier = extractBilibiliIdentifier(from: browserUrl),
+        guard let bilibiliIdentifier = BilibiliService.extractIdentifier(from: browserUrl),
               bilibiliIdentifier.hasPrefix("BV") else {
             clearTrackedState()
             return
@@ -480,7 +473,7 @@ final class ActivityTracker {
                     displayTitle: metadata.title,
                     // 知识类视频保留具体标题并按 BV 号累计；
                     // 娱乐类统一折叠成“娱乐”，后续统计页默认不把它算进学习向指标。
-                    groupedTitle: metadata.isKnowledge ? metadata.title : bilibiliEntertainmentTitle,
+                    groupedTitle: metadata.isKnowledge ? metadata.title : AppConfig.bilibiliEntertainmentTitle,
                     domain: "bilibili.com",
                     bilibiliIdentifier: metadata.isKnowledge ? bilibiliIdentifier : nil,
                     bilibiliTidV2: metadata.tidV2,
@@ -499,7 +492,7 @@ final class ActivityTracker {
         pendingBilibiliMetadataRequests.insert(bilibiliIdentifier)
 
         Task { [weak self] in
-            let metadata = await Self.fetchBilibiliMetadata(for: bilibiliIdentifier)
+            let metadata = await BilibiliService.fetchMetadata(for: bilibiliIdentifier)
             await MainActor.run {
                 guard let self else { return }
                 self.pendingBilibiliMetadataRequests.remove(bilibiliIdentifier)
@@ -509,34 +502,6 @@ final class ActivityTracker {
                 self.track(forceRefresh: true)
             }
         }
-    }
-
-    nonisolated private static func fetchBilibiliMetadata(for bilibiliIdentifier: String) async -> BilibiliVideoMetadata? {
-        guard let url = URL(string: "https://api.bilibili.com/x/web-interface/view?bvid=\(bilibiliIdentifier)") else {
-            return nil
-        }
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 5
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let response = try? JSONDecoder().decode(BilibiliViewResponse.self, from: data),
-              response.code == 0,
-              let responseData = response.data else {
-            return nil
-        }
-
-        let tidV2 = responseData.tidV2 ?? responseData.tid
-        let title = responseData.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
-
-        return BilibiliVideoMetadata(
-            title: title,
-            tidV2: tidV2,
-            isKnowledge: bilibiliKnowledgeTidV2s.contains(tidV2)
-        )
     }
 
     private func normalizedPreviewPDFTitle(from title: String) -> String? {
@@ -552,36 +517,6 @@ final class ActivityTracker {
         // 预览只在明确识别出 PDF 文件名时才参与统计，
         // 避免欢迎页、图片或其它非 PDF 文档被误算进学习时长。
         return String(cleanedTitle[..<range.upperBound])
-    }
-
-    nonisolated private static func fetchBrowserUrl(appName: String) -> String? {
-        let script: String
-        if appName.contains("Safari") {
-            script = "tell application \"Safari\" to return URL of front document"
-        } else if appName.contains("Chrome") {
-            script = "tell application \"Google Chrome\" to return URL of active tab of front window"
-        } else if appName.contains("Edge") {
-            script = "tell application \"Microsoft Edge\" to return URL of active tab of front window"
-        } else {
-            return nil
-        }
-
-        var error: NSDictionary?
-        if let appleScript = NSAppleScript(source: script) {
-            let result = appleScript.executeAndReturnError(&error)
-            return result.stringValue
-        }
-        return nil
-    }
-
-    private func extractBilibiliIdentifier(from url: String) -> String? {
-        let pattern = "(BV[a-zA-Z0-9]+|ep[0-9]+)"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []),
-           let match = regex.firstMatch(in: url, options: [], range: NSRange(location: 0, length: url.utf16.count)) {
-            let nsString = url as NSString
-            return nsString.substring(with: match.range)
-        }
-        return nil
     }
 
     private func matchedWhitelistedDomainFromHost(_ host: String) -> String? {
@@ -673,27 +608,4 @@ private struct PublishedActivityState: Equatable {
     let domain: String?
     let bilibiliIdentifier: String?
     let fullUrl: String?
-}
-
-private struct BilibiliVideoMetadata {
-    let title: String
-    let tidV2: Int
-    let isKnowledge: Bool
-}
-
-private struct BilibiliViewResponse: Decodable {
-    let code: Int
-    let data: BilibiliViewData?
-}
-
-private struct BilibiliViewData: Decodable {
-    let tid: Int
-    let tidV2: Int?
-    let title: String
-
-    enum CodingKeys: String, CodingKey {
-        case tid
-        case tidV2 = "tid_v2"
-        case title
-    }
 }
