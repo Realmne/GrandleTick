@@ -355,7 +355,7 @@ struct ReportBalanceDonutCard: View {
     let entertainmentDuration: TimeInterval
     let formatDuration: (TimeInterval) -> String
     
-    @State private var animProgress: Double = 0.0
+    @State private var animateData = false
     
     private var total: TimeInterval { studyDuration + entertainmentDuration }
     private var studyShare: Double { total > 0 ? studyDuration / total : 1.0 }
@@ -373,9 +373,12 @@ struct ReportBalanceDonutCard: View {
                 .font(.headline)
             
             HStack(spacing: 24) {
+                let displayStudy = animateData ? studyDuration : 0.0
+                let displayEntertainment = animateData ? entertainmentDuration : 0.0
+                
                 let data = [
-                    Segment(type: "学习时间", duration: studyDuration * animProgress, color: .blue),
-                    Segment(type: "娱乐时间", duration: entertainmentDuration * animProgress, color: .orange)
+                    Segment(type: "学习时间", duration: displayStudy, color: Color.blue.opacity(0.65)),
+                    Segment(type: "娱乐时间", duration: displayEntertainment, color: Color.orange.opacity(0.55))
                 ].filter { $0.duration > 0 }
                 
                 Chart(data) { segment in
@@ -385,9 +388,10 @@ struct ReportBalanceDonutCard: View {
                         angularInset: 2.0
                     )
                     .cornerRadius(6)
-                    .foregroundStyle(segment.color.gradient)
+                    .foregroundStyle(segment.color)
                 }
                 .frame(width: 140, height: 140)
+                .animation(.spring(response: 0.75, dampingFraction: 0.80), value: animateData)
                 .chartBackground { chartProxy in
                     GeometryReader { geo in
                         if let frame = chartProxy.plotFrame {
@@ -399,7 +403,7 @@ struct ReportBalanceDonutCard: View {
                                     .foregroundColor(.secondary)
                                 Text("\(Int((studyShare * 100).rounded()))%")
                                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(Color.blue.opacity(0.85))
                             }
                             .position(x: frameWidth / 2, y: frameHeight / 2)
                         }
@@ -407,8 +411,8 @@ struct ReportBalanceDonutCard: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 16) {
-                    ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: .blue)
-                    ReportLegendStat(title: "娱乐时间", value: formatDuration(entertainmentDuration), tint: .orange)
+                    ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: Color.blue.opacity(0.65))
+                    ReportLegendStat(title: "娱乐时间", value: formatDuration(entertainmentDuration), tint: Color.orange.opacity(0.55))
                 }
                 
                 Spacer()
@@ -416,11 +420,11 @@ struct ReportBalanceDonutCard: View {
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.80)))
+        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.easeOut(duration: 0.8)) {
-                animProgress = 1.0
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.1)) {
+                animateData = true
             }
         }
     }
@@ -431,9 +435,14 @@ struct ReportAppDistributionCard: View {
     let totalDuration: TimeInterval
     let formatDuration: (TimeInterval) -> String
     
-    @State private var animProgress: Double = 0.0
+    @State private var animateData = false
     
-    private let palette: [Color] = [.blue, .purple, .teal, .pink]
+    private let palette: [Color] = [
+        Color.blue.opacity(0.65),
+        Color.purple.opacity(0.55),
+        Color.teal.opacity(0.55),
+        Color.pink.opacity(0.55)
+    ]
     
     struct Segment: Identifiable {
         let id = UUID()
@@ -454,7 +463,7 @@ struct ReportAppDistributionCard: View {
         
         let remaining = max(0, totalDuration - sumTop)
         if remaining > 60 {
-            result.append(Segment(name: "其他应用", duration: remaining, color: .gray.opacity(0.4)))
+            result.append(Segment(name: "其他应用", duration: remaining, color: Color.secondary.opacity(0.25)))
         }
         
         return result
@@ -465,7 +474,9 @@ struct ReportAppDistributionCard: View {
             Text("App 专注度分布")
                 .font(.headline)
             
-            let displaySegments = segments.map { Segment(name: $0.name, duration: $0.duration * animProgress, color: $0.color) }
+            let displaySegments = segments.map { 
+                Segment(name: $0.name, duration: animateData ? $0.duration : 0.0, color: $0.color) 
+            }
             
             HStack(spacing: 20) {
                 Chart(displaySegments) { segment in
@@ -475,15 +486,16 @@ struct ReportAppDistributionCard: View {
                         angularInset: 1.5
                     )
                     .cornerRadius(5)
-                    .foregroundStyle(segment.color.gradient)
+                    .foregroundStyle(segment.color)
                 }
                 .frame(width: 140, height: 140)
+                .animation(.spring(response: 0.75, dampingFraction: 0.80), value: animateData)
                 
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(segments) { segment in
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(segment.color.gradient)
+                                .fill(segment.color)
                                 .frame(width: 8, height: 8)
                             
                             VStack(alignment: .leading, spacing: 2) {
@@ -504,11 +516,11 @@ struct ReportAppDistributionCard: View {
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.80)))
+        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.easeOut(duration: 0.85)) {
-                animProgress = 1.0
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
+                animateData = true
             }
         }
     }
@@ -520,7 +532,7 @@ struct ReportContentCategoryCard: View {
     let totalDuration: TimeInterval
     let formatDuration: (TimeInterval) -> String
     
-    @State private var animProgress: Double = 0.0
+    @State private var animateData = false
     
     struct Category: Identifiable {
         let id = UUID()
@@ -532,9 +544,9 @@ struct ReportContentCategoryCard: View {
     private var categories: [Category] {
         let appDuration = max(0, totalDuration - websiteDuration - pdfDuration)
         return [
-            Category(name: "PDF 文档", duration: pdfDuration, color: .purple),
-            Category(name: "网页浏览", duration: websiteDuration, color: .teal),
-            Category(name: "原生应用", duration: appDuration, color: .blue)
+            Category(name: "PDF 文档", duration: pdfDuration, color: Color.purple.opacity(0.55)),
+            Category(name: "网页浏览", duration: websiteDuration, color: Color.teal.opacity(0.55)),
+            Category(name: "原生应用", duration: appDuration, color: Color.blue.opacity(0.65))
         ].filter { $0.duration > 0 }
     }
     
@@ -543,7 +555,9 @@ struct ReportContentCategoryCard: View {
             Text("学习载体分布")
                 .font(.headline)
             
-            let displayCategories = categories.map { Category(name: $0.name, duration: $0.duration * animProgress, color: $0.color) }
+            let displayCategories = categories.map { 
+                Category(name: $0.name, duration: animateData ? $0.duration : 0.0, color: $0.color) 
+            }
             
             HStack(spacing: 24) {
                 Chart(displayCategories) { item in
@@ -553,15 +567,16 @@ struct ReportContentCategoryCard: View {
                         angularInset: 2.0
                     )
                     .cornerRadius(5)
-                    .foregroundStyle(item.color.gradient)
+                    .foregroundStyle(item.color)
                 }
                 .frame(width: 140, height: 140)
+                .animation(.spring(response: 0.75, dampingFraction: 0.80), value: animateData)
                 
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(categories) { item in
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(item.color.gradient)
+                                .fill(item.color)
                                 .frame(width: 8, height: 8)
                             
                             VStack(alignment: .leading, spacing: 2) {
@@ -581,11 +596,11 @@ struct ReportContentCategoryCard: View {
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.80)))
+        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.easeOut(duration: 0.8)) {
-                animProgress = 1.0
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.1)) {
+                animateData = true
             }
         }
     }
@@ -594,7 +609,7 @@ struct ReportContentCategoryCard: View {
 struct ReportRhythmHourlyChart: View {
     let hourlyDurations: [Double]
     
-    @State private var animProgress: Double = 0.0
+    @State private var animateData = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -602,7 +617,7 @@ struct ReportRhythmHourlyChart: View {
                 .font(.headline)
             
             let chartData = hourlyDurations.enumerated().map { index, value in
-                (hour: index, value: (value / 3600.0) * animProgress)
+                (hour: index, value: animateData ? (value / 3600.0) : 0.0)
             }
             
             Chart {
@@ -613,12 +628,11 @@ struct ReportRhythmHourlyChart: View {
                     )
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [.purple.opacity(0.30), .purple.opacity(0.01)],
+                            colors: [Color.purple.opacity(0.22), Color.purple.opacity(0.01)],
                             startPoint: .top,
                             endPoint: .bottom
                         )
                     )
-                    .interpolationMethod(.catmullRom)
                 }
                 
                 ForEach(chartData, id: \.hour) { item in
@@ -626,12 +640,12 @@ struct ReportRhythmHourlyChart: View {
                         x: .value("时间", "\(item.hour)点"),
                         y: .value("时长", item.value)
                     )
-                    .foregroundStyle(Color.purple.gradient)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5))
-                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(Color.purple.opacity(0.60))
+                    .lineStyle(StrokeStyle(lineWidth: 2.0))
                 }
             }
             .frame(height: 180)
+            .animation(.spring(response: 0.8, dampingFraction: 0.80), value: animateData)
             .chartXAxis {
                 AxisMarks(values: ["0点", "4点", "8点", "12点", "16点", "20点"]) { value in
                     AxisValueLabel {
@@ -653,11 +667,11 @@ struct ReportRhythmHourlyChart: View {
             }
         }
         .padding(22)
-        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.80)))
+        .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.9)) {
-                animProgress = 1.0
+            withAnimation(.spring(response: 0.8, dampingFraction: 0.80).delay(0.2)) {
+                animateData = true
             }
         }
     }
