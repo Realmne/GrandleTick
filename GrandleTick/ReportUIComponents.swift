@@ -373,12 +373,9 @@ struct ReportBalanceDonutCard: View {
                 .font(.headline)
             
             HStack(spacing: 24) {
-                let displayStudy = animateData ? studyDuration : 0.0
-                let displayEntertainment = animateData ? entertainmentDuration : 0.0
-                
                 let data = [
-                    Segment(type: "学习时间", duration: displayStudy, color: Color.blue.opacity(0.65)),
-                    Segment(type: "娱乐时间", duration: displayEntertainment, color: Color.orange.opacity(0.55))
+                    Segment(type: "学习时间", duration: studyDuration, color: Color.blue.opacity(0.65)),
+                    Segment(type: "娱乐时间", duration: entertainmentDuration, color: Color.orange.opacity(0.55))
                 ].filter { $0.duration > 0 }
                 
                 Chart(data) { segment in
@@ -391,7 +388,9 @@ struct ReportBalanceDonutCard: View {
                     .foregroundStyle(segment.color)
                 }
                 .frame(width: 140, height: 140)
-                .animation(.spring(response: 0.75, dampingFraction: 0.80), value: animateData)
+                .scaleEffect(animateData ? 1.0 : 0.88)
+                .opacity(animateData ? 1.0 : 0.0)
+                .animation(.spring(response: 0.70, dampingFraction: 0.80), value: animateData)
                 .chartBackground { chartProxy in
                     GeometryReader { geo in
                         if let frame = chartProxy.plotFrame {
@@ -423,7 +422,7 @@ struct ReportBalanceDonutCard: View {
         .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.1)) {
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
                 animateData = true
             }
         }
@@ -474,12 +473,8 @@ struct ReportAppDistributionCard: View {
             Text("App 专注度分布")
                 .font(.headline)
             
-            let displaySegments = segments.map { 
-                Segment(name: $0.name, duration: animateData ? $0.duration : 0.0, color: $0.color) 
-            }
-            
             HStack(spacing: 20) {
-                Chart(displaySegments) { segment in
+                Chart(segments) { segment in
                     SectorMark(
                         angle: .value("时长", segment.duration),
                         innerRadius: .ratio(0.60),
@@ -489,7 +484,9 @@ struct ReportAppDistributionCard: View {
                     .foregroundStyle(segment.color)
                 }
                 .frame(width: 140, height: 140)
-                .animation(.spring(response: 0.75, dampingFraction: 0.80), value: animateData)
+                .scaleEffect(animateData ? 1.0 : 0.88)
+                .opacity(animateData ? 1.0 : 0.0)
+                .animation(.spring(response: 0.70, dampingFraction: 0.80), value: animateData)
                 
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(segments) { segment in
@@ -519,7 +516,7 @@ struct ReportAppDistributionCard: View {
         .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.2)) {
                 animateData = true
             }
         }
@@ -555,12 +552,8 @@ struct ReportContentCategoryCard: View {
             Text("学习载体分布")
                 .font(.headline)
             
-            let displayCategories = categories.map { 
-                Category(name: $0.name, duration: animateData ? $0.duration : 0.0, color: $0.color) 
-            }
-            
             HStack(spacing: 24) {
-                Chart(displayCategories) { item in
+                Chart(categories) { item in
                     SectorMark(
                         angle: .value("时长", item.duration),
                         innerRadius: .ratio(0.60),
@@ -570,7 +563,9 @@ struct ReportContentCategoryCard: View {
                     .foregroundStyle(item.color)
                 }
                 .frame(width: 140, height: 140)
-                .animation(.spring(response: 0.75, dampingFraction: 0.80), value: animateData)
+                .scaleEffect(animateData ? 1.0 : 0.88)
+                .opacity(animateData ? 1.0 : 0.0)
+                .animation(.spring(response: 0.70, dampingFraction: 0.80), value: animateData)
                 
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(categories) { item in
@@ -599,7 +594,7 @@ struct ReportContentCategoryCard: View {
         .background(RoundedRectangle(cornerRadius: 26).fill(Color.white.opacity(0.78)))
         .overlay(RoundedRectangle(cornerRadius: 26).stroke(Color.white.opacity(0.72), lineWidth: 1))
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.1)) {
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
                 animateData = true
             }
         }
