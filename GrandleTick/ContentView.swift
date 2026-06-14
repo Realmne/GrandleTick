@@ -14,6 +14,37 @@ struct ContentView: View {
         usageManager.tracker.currentAppName.isEmpty
     }
     
+    /// 区分当前正在活跃的窗口是属于“学习专注”还是“娱乐休闲”
+    private var isStudyActive: Bool {
+        guard !isUntracked else { return false }
+        
+        let appName = usageManager.tracker.currentAppName
+        let windowTitle = usageManager.tracker.currentWindowTitle
+        let domain = usageManager.tracker.currentDomain
+        
+        let lowercasedAppName = appName.lowercased()
+        let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
+        
+        // 1. 如果是浏览器，需要进一步校验域名是否在白名单内，且排除 Bilibili 娱乐类视频。
+        if isWebsite {
+            guard let domain else { return false }
+            let isWhitelistedDomain = WhitelistManager.shared.whitelistedDomains.contains { $0.lowercased() == domain.lowercased() }
+            let isBilibiliEntertainment = domain == "bilibili.com" && windowTitle == AppConfig.bilibiliEntertainmentTitle
+            return isWhitelistedDomain && !isBilibiliEntertainment
+        } 
+        
+        // 2. 如果是 macOS 预览 App，需要明确判断是否正在查看 PDF 文件以归为学习。
+        if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
+            return windowTitle.lowercased().contains(".pdf")
+        } 
+        
+        // 3. 其他常规应用直接根据应用名称是否在白名单中来判断是否属于专注学习。
+        return WhitelistManager.shared.whitelistedApps.contains { app in
+            let lowercasedApp = app.lowercased()
+            return lowercasedApp == lowercasedAppName || lowercasedApp.contains(lowercasedAppName) || lowercasedAppName.contains(lowercasedApp)
+        }
+    }
+    
     private var currentTitle: String {
         isUntracked ? "未追踪的窗口" : usageManager.tracker.currentWindowTitle
     }
@@ -23,14 +54,17 @@ struct ContentView: View {
     }
     
     private var durationHeadline: String {
-        isUntracked ? "未在统计范围内" : "累计时长"
+        if isUntracked {
+            return "未在统计范围内"
+        }
+        return isStudyActive ? "累计学习时间" : "累计娱乐时间"
     }
     
     private var durationSubtitle: String {
         if isUntracked {
             return "切换到白名单内的应用或网站后会继续累计"
         }
-        return currentSourceName
+        return isStudyActive ? "正在记录学习专注时长" : "非白名单应用，归为娱乐时长"
     }
     
     var body: some View {
@@ -56,14 +90,14 @@ struct ContentView: View {
             
             VStack(alignment: .center, spacing: 12) {
                 StatusPill(
-                    text: isUntracked ? "已暂停统计" : "正在使用",
-                    tint: isUntracked ? .gray : .blue,
-                    systemImage: isUntracked ? "pause.fill" : "bolt.fill"
+                    text: isUntracked ? "已暂停统计" : (isStudyActive ? "学习中 / 专注" : "娱乐 / 休闲"),
+                    tint: isUntracked ? .gray : (isStudyActive ? .blue : .purple),
+                    systemImage: isUntracked ? "pause.fill" : (isStudyActive ? "book.fill" : "gamecontroller.fill")
                 )
 
-                Image(systemName: isUntracked ? "pause.circle.fill" : "app.badge.checkmark.fill")
+                Image(systemName: isUntracked ? "pause.circle.fill" : (isStudyActive ? "book.closed.fill" : "gamecontroller.fill"))
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(isUntracked ? .gray : .blue)
+                    .foregroundColor(isUntracked ? .gray : (isStudyActive ? .blue : .purple))
                     .frame(width: 28, height: 28)
 
                 VStack(spacing: 6) {
@@ -94,7 +128,7 @@ struct ContentView: View {
 
                 Text(usageManager.formattedPopoverDuration)
                     .font(.system(size: 36, weight: .bold, design: .monospaced))
-                    .foregroundColor(isUntracked ? .gray : .primary)
+                    .foregroundColor(isUntracked ? .gray : (isStudyActive ? .blue : .purple))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .frame(maxWidth: .infinity, alignment: .center)
