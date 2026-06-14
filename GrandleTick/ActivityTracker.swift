@@ -524,13 +524,13 @@ final class ActivityTracker {
 
     /// 1. 判断是否属于正常的用户前台应用，过滤掉状态栏图标、后台常驻服务和系统级底层 UI。
     private func isUserFacingApp(_ activeApp: NSRunningApplication) -> Bool {
-        // (1) 检查应用的激活策略：仅允许 regular（拥有常规 Dock 图标和主窗口）应用通过，
+        // 1. 检查应用的激活策略：仅允许 regular（拥有常规 Dock 图标和主窗口）应用通过，
         // 从而直接把 accessory（仅状态栏图标的辅助软件）和 prohibited（后台服务）排除，防止系统后台进程干扰。
         guard activeApp.activationPolicy == .regular else {
             return false
         }
 
-        // (2) 排除部分虽属于常规激活策略，但实为系统功能底座的内置 Bundle 标识。
+        // 2. 排除部分虽属于常规激活策略，但实为系统功能底座的内置 Bundle 标识。
         guard let bundleId = activeApp.bundleIdentifier else {
             return false
         }
@@ -552,7 +552,7 @@ final class ActivityTracker {
             return false
         }
 
-        // (3) 根据 Bundle 所在的绝对路径剔除位于系统库文件、核心组件或守护进程目录下的进程。
+        // 3. 根据 Bundle 所在的绝对路径剔除位于系统库文件、核心组件或守护进程目录下的进程。
         if let bundleURL = activeApp.bundleURL {
             let path = bundleURL.path
             let excludedPaths = [
