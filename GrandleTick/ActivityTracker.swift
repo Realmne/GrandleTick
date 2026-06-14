@@ -98,14 +98,9 @@ final class ActivityTracker {
         let appName = activeApp.localizedName ?? "未知应用"
         let bundleId = activeApp.bundleIdentifier ?? ""
         let processId = activeApp.processIdentifier
-        let appBundleName = activeApp.bundleURL?.deletingPathExtension().lastPathComponent ?? appName
 
-        let isWhitelistedApp = WhitelistManager.shared.whitelistedApps.contains { whitelistedApp in
-            let lowercasedWhitelistedApp = whitelistedApp.lowercased()
-            return lowercasedWhitelistedApp == appName.lowercased() || lowercasedWhitelistedApp == appBundleName.lowercased()
-        }
-
-        if !isWhitelistedApp {
+        // 1. 过滤掉不属于用户前台交互的应用（如系统服务、守护进程、屏保等）
+        guard isUserFacingApp(activeApp) else {
             removeActiveAppObserver()
             clearTrackedState()
             return
@@ -136,25 +131,25 @@ final class ActivityTracker {
         }
 
         if isPreviewApp {
-            guard let normalizedTitle = normalizedPreviewPDFTitle(from: rawTitle) else {
-                clearTrackedState()
+            // 2. 针对预览 App：如果识别为 PDF 文档，则以 PDF 特殊路径进行匹配和上报；
+            // 否则（如打开的是图片或处于空窗状态），则不拦截并落入后面的常规应用处理，记为娱乐/休闲时长。
+            if let normalizedTitle = normalizedPreviewPDFTitle(from: rawTitle) {
+                applySnapshot(
+                    TrackedSnapshot(
+                        processId: processId,
+                        appName: appName,
+                        bundleId: bundleId,
+                        rawTitle: rawTitle,
+                        displayTitle: normalizedTitle,
+                        groupedTitle: normalizedTitle,
+                        domain: nil,
+                        bilibiliIdentifier: nil,
+                        bilibiliTidV2: nil,
+                        fullUrl: nil
+                    )
+                )
                 return
             }
-            applySnapshot(
-                TrackedSnapshot(
-                    processId: processId,
-                    appName: appName,
-                    bundleId: bundleId,
-                    rawTitle: rawTitle,
-                    displayTitle: normalizedTitle,
-                    groupedTitle: normalizedTitle,
-                    domain: nil,
-                    bilibiliIdentifier: nil,
-                    bilibiliTidV2: nil,
-                    fullUrl: nil
-                )
-            )
-            return
         }
 
         if isBrowserApp {
@@ -243,16 +238,16 @@ final class ActivityTracker {
         rawTitle: String,
         browserUrl: String?
     ) {
-        let matchedWhitelistedDomain: String? = {
+        let matchedDomain: String? = {
             guard let browserUrl,
                   let url = URL(string: browserUrl),
                   let host = url.host?.lowercased() else {
                 return nil
             }
-            return matchedWhitelistedDomainFromHost(host)
+            return matchedWhitelistedDomainFromHost(host) ?? host
         }()
 
-        if matchedWhitelistedDomain == "bilibili.com",
+        if matchedDomain == "bilibili.com",
            let browserUrl {
             resolveBilibiliSnapshot(
                 appName: appName,
@@ -264,7 +259,7 @@ final class ActivityTracker {
             return
         }
 
-        if let cachedBrowserTitleData = ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: matchedWhitelistedDomain)] {
+        if let cachedBrowserTitleData = ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: matchedDomain)] {
             let snapshot = TrackedSnapshot(
                 processId: processId,
                 appName: appName,
@@ -272,8 +267,8 @@ final class ActivityTracker {
                 rawTitle: rawTitle,
                 displayTitle: cachedBrowserTitleData.displayTitle,
                 groupedTitle: cachedBrowserTitleData.groupedTitle,
-                domain: matchedWhitelistedDomain,
-                bilibiliIdentifier: matchedWhitelistedDomain == "bilibili.com" ? browserUrl.flatMap(BilibiliService.extractIdentifier) : nil,
+                domain: matchedDomain,
+                bilibiliIdentifier: matchedDomain == "bilibili.com" ? browserUrl.flatMap(BilibiliService.extractIdentifier) : nil,
                 bilibiliTidV2: nil,
                 fullUrl: browserUrl
             )
@@ -283,22 +278,18 @@ final class ActivityTracker {
 
         var displayTitle = rawTitle
         var groupedTitle = rawTitle
-        var hasMatchedWhitelistedDomain = false
-        var matchedDomain: String?
+        var hasMatchedDomain = false
+        var targetMatchedDomain: String? = matchedDomain
         var bilibiliIdentifier: String?
 
         if let currentBrowserUrl = browserUrl,
            let url = URL(string: currentBrowserUrl),
-           let host = url.host?.lowercased(),
-           let resolvedDomain = matchedWhitelistedDomainFromHost(host) {
-            hasMatchedWhitelistedDomain = true
-            matchedDomain = resolvedDomain
+           let host = url.host?.lowercased() {
+            hasMatchedDomain = true
+            let resolvedDomain = matchedWhitelistedDomainFromHost(host) ?? host
+            targetMatchedDomain = resolvedDomain
 
             if resolvedDomain == "bilibili.com" {
-                // B站是特殊站点：
-                // - 展示标题尽量还原到具体视频
-                // - 后续累计时按 BV 号区分不同视频
-                // - 非知识类内容会在这里被归并到“娱乐”
                 bilibiliIdentifier = BilibiliService.extractIdentifier(from: currentBrowserUrl)
                 if rawTitle.isEmpty || rawTitle.contains("无标题") || rawTitle.lowercased().contains("untitled") {
                     displayTitle = "网页加载中..."
@@ -323,8 +314,6 @@ final class ActivityTracker {
                     }
                 }
             } else {
-                // 除 B站外，网站统一按域名归组展示和累计。
-                // rawTitle 只用于当前展示，不参与累计身份，避免一个站点被拆成无数页面。
                 let domainLabel = resolvedDomain.components(separatedBy: ".").first?.capitalized ?? resolvedDomain
                 displayTitle = rawTitle.isEmpty ? "网页加载中..." : rawTitle
                 groupedTitle = domainLabel
@@ -334,27 +323,35 @@ final class ActivityTracker {
             if lowercasedRawTitle.contains("无标题") || lowercasedRawTitle.contains("untitled") {
                 displayTitle = "网页加载中..."
                 groupedTitle = "网页加载中..."
-                hasMatchedWhitelistedDomain = true
+                hasMatchedDomain = true
             } else {
+                var found = false
                 for domain in WhitelistManager.shared.whitelistedDomains {
                     let keyword = domain.components(separatedBy: ".").first ?? domain
                     if lowercasedRawTitle.contains(keyword) || (keyword == "bilibili" && lowercasedRawTitle.contains("哔哩哔哩")) {
                         displayTitle = rawTitle
                         groupedTitle = keyword.capitalized
-                        matchedDomain = domain
-                        hasMatchedWhitelistedDomain = true
+                        targetMatchedDomain = domain
+                        hasMatchedDomain = true
+                        found = true
                         break
                     }
+                }
+                if !found {
+                    displayTitle = rawTitle
+                    groupedTitle = appName
+                    targetMatchedDomain = nil
+                    hasMatchedDomain = true
                 }
             }
         }
 
-        guard hasMatchedWhitelistedDomain else {
+        guard hasMatchedDomain else {
             clearTrackedState()
             return
         }
 
-        ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: matchedDomain)] = BrowserTitleData(
+        ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: targetMatchedDomain)] = BrowserTitleData(
             displayTitle: displayTitle,
             groupedTitle: groupedTitle
         )
@@ -367,7 +364,7 @@ final class ActivityTracker {
                 rawTitle: rawTitle,
                 displayTitle: displayTitle,
                 groupedTitle: groupedTitle,
-                domain: matchedDomain,
+                domain: targetMatchedDomain,
                 bilibiliIdentifier: bilibiliIdentifier,
                 bilibiliTidV2: nil,
                 fullUrl: browserUrl
@@ -523,6 +520,55 @@ final class ActivityTracker {
         WhitelistManager.shared.whitelistedDomains.first { domain in
             host == domain || host.hasSuffix(".\(domain)")
         }
+    }
+
+    /// 1. 判断是否属于正常的用户前台应用，过滤掉状态栏图标、后台常驻服务和系统级底层 UI。
+    private func isUserFacingApp(_ activeApp: NSRunningApplication) -> Bool {
+        // (1) 检查应用的激活策略：仅允许 regular（拥有常规 Dock 图标和主窗口）应用通过，
+        // 从而直接把 accessory（仅状态栏图标的辅助软件）和 prohibited（后台服务）排除，防止系统后台进程干扰。
+        guard activeApp.activationPolicy == .regular else {
+            return false
+        }
+
+        // (2) 排除部分虽属于常规激活策略，但实为系统功能底座的内置 Bundle 标识。
+        guard let bundleId = activeApp.bundleIdentifier else {
+            return false
+        }
+
+        let excludedBundleIds: Set<String> = [
+            "com.apple.finder",           // 访达（文件管理器）作为纯操作底座，不算做具体娱乐或学习时长
+            "com.apple.dock",             // Dock 快捷栏
+            "com.apple.loginwindow",      // 锁屏或登录窗口
+            "com.apple.ScreenSaver.Engine", // 屏保程序
+            "com.apple.controlcenter",    // 控制中心
+            "com.apple.notificationcenterui", // 通知面板
+            "com.apple.SystemUIServer",   // 系统菜单栏
+            "com.apple.Siri",             // 语音助手界面
+            "com.apple.accessibility.AccessibilityVisualsAgent", // 辅助功能弹窗
+            "com.apple.Spotlight"         // Spotlight 聚焦搜索面板
+        ]
+
+        if excludedBundleIds.contains(bundleId) {
+            return false
+        }
+
+        // (3) 根据 Bundle 所在的绝对路径剔除位于系统库文件、核心组件或守护进程目录下的进程。
+        if let bundleURL = activeApp.bundleURL {
+            let path = bundleURL.path
+            let excludedPaths = [
+                "/System/Library/CoreServices",
+                "/System/Library/Frameworks",
+                "/System/Library/PrivateFrameworks",
+                "/usr/libexec"
+            ]
+            for excludedPath in excludedPaths {
+                if path.hasPrefix(excludedPath) {
+                    return false
+                }
+            }
+        }
+
+        return true
     }
 
     private func browserTitleCacheKey(originalTitle: String, domain: String?) -> String {

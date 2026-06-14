@@ -96,6 +96,7 @@ struct PreparedLog: Identifiable, Sendable {
     let searchableText: String
     let isPDF: Bool
     let isWebsite: Bool
+    let isStudy: Bool
     var id: PreparedLogIdentity { identity }
 
     var endTime: Date {
@@ -103,13 +104,15 @@ struct PreparedLog: Identifiable, Sendable {
     }
 
     init?(log: ActivityLog, whitelist: WhitelistSnapshot, calendar: Calendar) {
+        // 1. 过滤掉无意义的系统权限提示或未知/无效空日志
         if log.windowTitle.contains("权限") || log.windowTitle.contains("未知") || log.appName.isEmpty { return nil }
+        
         let lowercasedAppName = log.appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
-        let isWhitelistedApp = whitelist.lowercasedApps.contains { $0 == lowercasedAppName || $0.contains(lowercasedAppName) || lowercasedAppName.contains($0) }
-        guard isWhitelistedApp else { return nil }
+        
+        // 2. 解析域名。如果有域名，无论是否在白名单，均保留以支持网站统计与分类。
         let resolvedDomain = Self.resolveDomain(for: log, whitelist: whitelist)
-        if isWebsite && !log.windowTitle.contains("网页加载中") && resolvedDomain == nil { return nil }
+        
         self.identity = PreparedLogIdentity(appName: log.appName, windowTitle: log.windowTitle, startTime: log.startTime, duration: log.duration, domain: log.domain, bilibiliIdentifier: log.bilibiliIdentifier, fullUrl: log.fullUrl)
         self.appName = log.appName
         self.windowTitle = log.windowTitle
@@ -119,14 +122,37 @@ struct PreparedLog: Identifiable, Sendable {
         self.resolvedDomain = resolvedDomain
         self.bilibiliIdentifier = log.bilibiliIdentifier
         self.fullUrl = log.fullUrl
+        
+        // 3. 构建搜索文本，以便后续过滤与检索
         self.searchableText = [log.appName, log.windowTitle, resolvedDomain ?? "", log.fullUrl ?? ""].joined(separator: "\n").lowercased()
+        
+        // 4. PDF 判断：必须是预览 App 且文件名以 .pdf 结尾
         let lowercasedTitle = log.windowTitle.lowercased()
-        self.isPDF = (lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview")) && lowercasedTitle.contains(".pdf")
+        let isPDF = (lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview")) && lowercasedTitle.contains(".pdf")
+        self.isPDF = isPDF
         self.isWebsite = isWebsite
+        
+        // 5. 分类学习 vs 娱乐/休闲。白名单外的所有其它应用均归入娱乐/休闲。
+        let isStudy: Bool
+        if isWebsite {
+            let isWhitelistedDomain = resolvedDomain.flatMap { domain in
+                whitelist.domains.contains { $0.lowercased() == domain.lowercased() }
+            } ?? false
+            let isBilibiliEntertainment = resolvedDomain == "bilibili.com" && log.windowTitle == AppConfig.bilibiliEntertainmentTitle
+            isStudy = isWhitelistedDomain && !isBilibiliEntertainment
+        } else if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
+            isStudy = isPDF
+        } else {
+            let isWhitelistedApp = whitelist.lowercasedApps.contains { $0 == lowercasedAppName || $0.contains(lowercasedAppName) || lowercasedAppName.contains($0) }
+            isStudy = isWhitelistedApp
+        }
+        self.isStudy = isStudy
     }
 
     private static func resolveDomain(for log: ActivityLog, whitelist: WhitelistSnapshot) -> String? {
-        if let domain = log.domain, whitelist.domains.contains(domain) { return domain }
+        // 如果数据库日志里有解析好的 domain，优先直接返回它以保留一般网站的域名数据
+        if let domain = log.domain, !domain.isEmpty { return domain }
+        // 兜底从窗口标题中尝试提取白名单域名
         let lowercasedWindowTitle = log.windowTitle.lowercased()
         return whitelist.domainKeywords.first { entry in lowercasedWindowTitle.contains(entry.keyword) || (entry.keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩")) }?.domain
     }
@@ -359,8 +385,14 @@ final class StatisticsEngine {
             let newFilteredLogs = Self.applyCriteria(to: currentLogs, using: filters)
             let prevFilteredLogs = Self.applyCriteria(to: prevLogs, using: filters)
 
-            // 4. 计算每日的概览图表趋势点和当前选中的天数。
-            let newDaySummaries = Self.dailySummaries(for: newFilteredLogs)
+            // 4. 将日志区分为学习与娱乐类别，用于后续指标计算。
+            let currentStudyLogs = newFilteredLogs.filter { !Self.isEntertainmentLog($0) }
+            let previousStudyLogs = prevFilteredLogs.filter { !Self.isEntertainmentLog($0) }
+            let currentEntertainmentLogs = newFilteredLogs.filter { Self.isEntertainmentLog($0) }
+
+            // 5. 计算每日的概览图表趋势点和当前选中的天数。
+            // 传入 newFilteredLogs (全部日志，用于获取所有活跃天数以保证可在图表上点选) 和 currentStudyLogs (仅学习日志，用于累计专注时长)
+            let newDaySummaries = Self.dailySummaries(for: newFilteredLogs, studyLogs: currentStudyLogs)
             let resolvedDay = Self.resolvedSelectedDay(
                 currentSelection: currentSelectedDay,
                 from: newDaySummaries,
@@ -369,15 +401,10 @@ final class StatisticsEngine {
             let todayLogs = Self.logs(for: now, in: newFilteredLogs, calendar: calendar)
             let selectedLogs = Self.logs(for: resolvedDay, in: newFilteredLogs, calendar: calendar)
 
-            // 5. 按照报告规则计算学习（非娱乐）日志和娱乐日志。
-            let currentStudyLogs = newFilteredLogs.filter { !Self.isEntertainmentLog($0) }
-            let previousStudyLogs = prevFilteredLogs.filter { !Self.isEntertainmentLog($0) }
-            let currentEntertainmentLogs = newFilteredLogs.filter { Self.isEntertainmentLog($0) }
-
             // 6. 执行概览卡片数值计算（学习时长、娱乐时长等）。
             let studyDuration = currentStudyLogs.reduce(0) { $0 + $1.duration }
             let entertainmentDuration = currentEntertainmentLogs.reduce(0) { $0 + $1.duration }
-            let activeDays = newDaySummaries.count
+            let activeDays = newDaySummaries.filter { $0.totalTime > 0 }.count
             let averageDailyDuration = activeDays > 0 ? studyDuration / Double(activeDays) : 0
 
             // 7. 计算高峰日（最专注的一天）与低谷日（已完成天数内学习时间最少的一天）。
@@ -418,7 +445,7 @@ final class StatisticsEngine {
                 topAppSummary: Self.topAppSummary(in: sourceLogs),
                 rankingEntries: Self.rankingEntries(for: newFilteredLogs, dimension: dimension),
                 resolvedSelectedDay: resolvedDay,
-                todayDuration: todayLogs.reduce(0) { $0 + $1.duration },
+                todayDuration: todayLogs.filter { !Self.isEntertainmentLog($0) }.reduce(0) { $0 + $1.duration },
                 selectedDayAppSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .app),
                 selectedDayDomainSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .domain),
                 selectedDayPdfSummaries: Self.pdfSummaries(for: selectedLogs),
@@ -661,10 +688,13 @@ final class StatisticsEngine {
         }
     }
 
-    nonisolated private static func dailySummaries(for logs: [PreparedLog]) -> [DaySummary] {
-        let grouped = Dictionary(grouping: logs) { $0.dayStart }
-        return grouped.map { date, dayLogs in
-            DaySummary(date: date, totalTime: dayLogs.reduce(0) { $0 + $1.duration })
+    nonisolated private static func dailySummaries(for logs: [PreparedLog], studyLogs: [PreparedLog]) -> [DaySummary] {
+        let allDays = Set(logs.map { $0.dayStart })
+        let studyGrouped = Dictionary(grouping: studyLogs) { $0.dayStart }
+        return allDays.map { date in
+            let dayStudyLogs = studyGrouped[date] ?? []
+            let studyDuration = dayStudyLogs.reduce(0) { $0 + $1.duration }
+            return DaySummary(date: date, totalTime: studyDuration)
         }
         .sorted { $0.date < $1.date }
     }
@@ -733,7 +763,7 @@ final class StatisticsEngine {
     }
 
     nonisolated private static func isEntertainmentLog(_ log: PreparedLog) -> Bool {
-        log.resolvedDomain == "bilibili.com" && log.windowTitle == AppConfig.bilibiliEntertainmentTitle
+        !log.isStudy
     }
 
     nonisolated private static func rankingKey(for log: PreparedLog, dimension: RankingDimension) -> String? {

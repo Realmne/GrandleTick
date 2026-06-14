@@ -75,7 +75,7 @@ struct StatisticsView: View {
                             // 7. App 专注度分布，提供 App 占比环形图及热门前三排行。
                             AppFocusDonutCard(
                                 topApps: engine.rankingEntries,
-                                totalDuration: engine.studyDuration,
+                                totalDuration: engine.rangeTotalDuration,
                                 formatDuration: formatCompactDuration
                             )
 
