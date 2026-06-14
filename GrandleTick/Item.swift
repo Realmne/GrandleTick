@@ -14,8 +14,9 @@ final class ActivityLog {
     var bilibiliTidV2: Int?                  // B站视频分区 tid_v2
     @Attribute(originalName: "fullUrl")
     var fullUrl: String?                     // 完整网页地址
+    var pdfIdentifier: String?               // PDF文件系统唯一特征码，重命名后仍保持相同，用于唯一归类
     
-    init(appName: String, windowTitle: String, startTime: Date, duration: TimeInterval = 0, domain: String? = nil, bilibiliIdentifier: String? = nil, bilibiliTidV2: Int? = nil, fullUrl: String? = nil) {
+    init(appName: String, windowTitle: String, startTime: Date, duration: TimeInterval = 0, domain: String? = nil, bilibiliIdentifier: String? = nil, bilibiliTidV2: Int? = nil, fullUrl: String? = nil, pdfIdentifier: String? = nil) {
         self.appName = appName
         self.windowTitle = windowTitle
         self.startTime = startTime
@@ -24,5 +25,6 @@ final class ActivityLog {
         self.bilibiliIdentifier = bilibiliIdentifier
         self.bilibiliTidV2 = bilibiliTidV2
         self.fullUrl = fullUrl
+        self.pdfIdentifier = pdfIdentifier
     }
 }

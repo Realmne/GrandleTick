@@ -1,5 +1,6 @@
 import AppKit
 import SwiftData
+import CryptoKit
 
 struct BrowserTitleData {
     let displayTitle: String
@@ -17,6 +18,7 @@ final class ActivityTracker {
     var currentBilibiliId: String? = nil
     var currentBilibiliTidV2: Int? = nil
     var currentFullUrl: String? = nil
+    var currentPdfIdentifier: String? = nil
     var activityDidChange: (() -> Void)?
 
     static var titleCache: [String: BrowserTitleData] = [:]
@@ -134,6 +136,19 @@ final class ActivityTracker {
             // 2. 针对预览 App：如果识别为 PDF 文档，则以 PDF 特殊路径进行匹配和上报；
             // 否则（如打开的是图片或处于空窗状态），则不拦截并落入后面的常规应用处理，记为娱乐/休闲时长。
             if let normalizedTitle = normalizedPreviewPDFTitle(from: rawTitle) {
+                // (1) 复制焦点窗口的 AXDocument 属性获取真实的 file:// 协议路径
+                var docRef: CFTypeRef?
+                let docResult = AXUIElementCopyAttributeValue(windowElement as! AXUIElement, "AXDocument" as CFString, &docRef)
+                let docUrl: URL? = {
+                    if docResult == .success, let docUrlString = docRef as? String {
+                        return URL(string: docUrlString)
+                    }
+                    return nil
+                }()
+                
+                // (2) 使用系统 Inode 与快速文件哈希特征指纹唯一识别该 PDF
+                let pdfId = generatePDFIdentifier(for: docUrl)
+
                 applySnapshot(
                     TrackedSnapshot(
                         processId: processId,
@@ -145,7 +160,8 @@ final class ActivityTracker {
                         domain: nil,
                         bilibiliIdentifier: nil,
                         bilibiliTidV2: nil,
-                        fullUrl: nil
+                        fullUrl: nil,
+                        pdfIdentifier: pdfId
                     )
                 )
                 return
@@ -175,7 +191,8 @@ final class ActivityTracker {
                 domain: nil,
                 bilibiliIdentifier: nil,
                 bilibiliTidV2: nil,
-                fullUrl: nil
+                fullUrl: nil,
+                pdfIdentifier: nil
             )
         )
     }
@@ -270,7 +287,8 @@ final class ActivityTracker {
                 domain: matchedDomain,
                 bilibiliIdentifier: matchedDomain == "bilibili.com" ? browserUrl.flatMap(BilibiliService.extractIdentifier) : nil,
                 bilibiliTidV2: nil,
-                fullUrl: browserUrl
+                fullUrl: browserUrl,
+                pdfIdentifier: nil
             )
             applySnapshot(snapshot)
             return
@@ -367,7 +385,8 @@ final class ActivityTracker {
                 domain: targetMatchedDomain,
                 bilibiliIdentifier: bilibiliIdentifier,
                 bilibiliTidV2: nil,
-                fullUrl: browserUrl
+                fullUrl: browserUrl,
+                pdfIdentifier: nil
             )
         )
     }
@@ -474,7 +493,8 @@ final class ActivityTracker {
                     domain: "bilibili.com",
                     bilibiliIdentifier: metadata.isKnowledge ? bilibiliIdentifier : nil,
                     bilibiliTidV2: metadata.tidV2,
-                    fullUrl: nil
+                    fullUrl: nil,
+                    pdfIdentifier: nil
                 )
             )
             return
@@ -580,6 +600,46 @@ final class ActivityTracker {
         currentBilibiliId = nil
         currentBilibiliTidV2 = nil
         currentFullUrl = nil
+        currentPdfIdentifier = nil
+    }
+
+    /// 3. 根据 PDF 文件 URL 计算一个唯一的 Inode 和快速内容哈希值特征指纹，确保文件重命名后依然能够合并统计
+    private func generatePDFIdentifier(for url: URL?) -> String? {
+        guard let url else { return nil }
+        
+        // 1. 获取文件 Inode 唯一标识符（同磁盘分区重命名时此标识符不变）
+        var inodeString = ""
+        if let values = try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]),
+           let fileID = values.fileResourceIdentifier {
+            inodeString = "\(fileID)"
+        }
+        
+        // 2. 计算快速内容指纹 (文件大小 + 头部 64KB 哈希 + 尾部 64KB 哈希，确保文件复制/跨设备传输后能正确辨识)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = attributes[.size] as? UInt64,
+              let fileHandle = try? FileHandle(forReadingFrom: url) else {
+            return inodeString.isEmpty ? nil : inodeString
+        }
+        
+        defer { try? fileHandle.close() }
+        
+        let chunkSize = min(Int(fileSize), 64 * 1024)
+        guard let firstChunk = try? fileHandle.read(upToCount: chunkSize) else {
+            return inodeString.isEmpty ? nil : inodeString
+        }
+        let firstHash = SHA256.hash(data: firstChunk).description.prefix(12)
+        
+        if fileSize > UInt64(chunkSize) {
+            try? fileHandle.seek(toOffset: fileSize - UInt64(chunkSize))
+        } else {
+            try? fileHandle.seek(toOffset: 0)
+        }
+        guard let lastChunk = try? fileHandle.read(upToCount: chunkSize) else {
+            return inodeString.isEmpty ? nil : inodeString
+        }
+        let lastHash = SHA256.hash(data: lastChunk).description.prefix(12)
+        
+        return "pdf_\(fileSize)_\(firstHash)_\(lastHash)"
     }
 
     private func clearTrackedState() {
@@ -599,6 +659,7 @@ final class ActivityTracker {
         currentBilibiliId = snapshot.bilibiliIdentifier
         currentBilibiliTidV2 = snapshot.bilibiliTidV2
         currentFullUrl = snapshot.fullUrl
+        currentPdfIdentifier = snapshot.pdfIdentifier
         lastResolvedSnapshot = snapshot
         publishActivityChangeIfNeeded()
     }
@@ -609,7 +670,8 @@ final class ActivityTracker {
             groupedTitle: currentGroupedTitle,
             domain: currentDomain,
             bilibiliIdentifier: currentBilibiliId,
-            fullUrl: currentFullUrl
+            fullUrl: currentFullUrl,
+            pdfIdentifier: currentPdfIdentifier
         )
         guard currentActivity != lastPublishedActivity else { return }
         lastPublishedActivity = currentActivity
@@ -636,6 +698,7 @@ private struct TrackedSnapshot {
     let bilibiliIdentifier: String?
     let bilibiliTidV2: Int?
     let fullUrl: String?
+    let pdfIdentifier: String?
 }
 
 private struct BrowserURLRefreshKey: Hashable, Sendable {
@@ -654,4 +717,5 @@ private struct PublishedActivityState: Equatable {
     let domain: String?
     let bilibiliIdentifier: String?
     let fullUrl: String?
+    let pdfIdentifier: String?
 }

@@ -103,7 +103,8 @@ final class UsageManager {
                 domain: trackedActivity.domain,
                 bilibiliIdentifier: trackedActivity.bilibiliIdentifier,
                 bilibiliTidV2: trackedActivity.bilibiliTidV2,
-                fullUrl: trackedActivity.fullUrl
+                fullUrl: trackedActivity.fullUrl,
+                pdfIdentifier: trackedActivity.pdfIdentifier
             )
         }
     }
@@ -133,14 +134,42 @@ final class UsageManager {
             domain: trackedActivity.domain,
             bilibiliIdentifier: trackedActivity.bilibiliIdentifier,
             bilibiliTidV2: trackedActivity.bilibiliTidV2,
-            fullUrl: trackedActivity.fullUrl
+            fullUrl: trackedActivity.fullUrl,
+            pdfIdentifier: trackedActivity.pdfIdentifier
         )
         currentPersistedLog = nil
+
+        // 如果是 PDF 且存在唯一标识符，触发自愈式后台迁移标记，自动为没有指纹的历史记录补充指纹
+        if let pdfId = trackedActivity.pdfIdentifier {
+            tagLegacyLogsWithIdentifier(appName: trackedActivity.appName, windowTitle: trackedActivity.groupedTitle, pdfIdentifier: pdfId)
+        }
 
         let baseline = loadBaselineDurations(for: trackedActivity.identity, now: startDate)
         currentBaselineTodayDuration = baseline.today
         currentBaselineHistoricalDuration = baseline.historical
         setDisplayedDurations(today: baseline.today, historical: baseline.historical)
+    }
+
+    /// 标记未绑定唯一指纹的历史 PDF 日志，以便重命名后仍然可以从历史累加时长中检索出
+    private func tagLegacyLogsWithIdentifier(appName: String, windowTitle: String, pdfIdentifier: String) {
+        guard let context = modelContext else { return }
+        
+        let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
+            log.appName == appName && log.windowTitle == windowTitle && log.pdfIdentifier == nil
+        })
+        
+        do {
+            let legacyLogs = try context.fetch(descriptor)
+            if !legacyLogs.isEmpty {
+                for log in legacyLogs {
+                    log.pdfIdentifier = pdfIdentifier
+                }
+                try context.save()
+                print("ℹ️ [Database] 成功为 \(legacyLogs.count) 条历史 PDF 日志标记了唯一标识符。")
+            }
+        } catch {
+            print("❌ [Database] 标记历史 PDF 日志失败: \(error.localizedDescription)")
+        }
     }
 
     private func createPersistedLog(endDate: Date) {
@@ -157,7 +186,8 @@ final class UsageManager {
             domain: currentSession.domain,
             bilibiliIdentifier: currentSession.bilibiliIdentifier,
             bilibiliTidV2: currentSession.bilibiliTidV2,
-            fullUrl: currentSession.fullUrl
+            fullUrl: currentSession.fullUrl,
+            pdfIdentifier: currentSession.pdfIdentifier
         )
         context.insert(log)
         try? context.save()
@@ -189,6 +219,7 @@ final class UsageManager {
             currentPersistedLog.bilibiliIdentifier = currentSession.bilibiliIdentifier
             currentPersistedLog.bilibiliTidV2 = currentSession.bilibiliTidV2
             currentPersistedLog.fullUrl = currentSession.fullUrl
+            currentPersistedLog.pdfIdentifier = currentSession.pdfIdentifier
             try? context.save()
         }
     }
@@ -219,12 +250,21 @@ final class UsageManager {
 
         let appName = identity.appName
         let groupedTitle = identity.groupedTitle
-        let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
-            log.appName == appName && log.windowTitle == groupedTitle
-        })
-
-        let matchingLogs = ((try? context.fetch(descriptor)) ?? []).filter { log in
-            log.domain == identity.domain && log.bilibiliIdentifier == identity.bilibiliIdentifier
+        
+        let matchingLogs: [ActivityLog]
+        if let pdfId = identity.pdfIdentifier, !pdfId.isEmpty {
+            // 对 PDF 来说，基于 pdfIdentifier 或相同 windowTitle（传统记录）来匹配基准时长
+            let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
+                log.appName == appName && (log.pdfIdentifier == pdfId || log.windowTitle == groupedTitle)
+            })
+            matchingLogs = (try? context.fetch(descriptor)) ?? []
+        } else {
+            let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
+                log.appName == appName && log.windowTitle == groupedTitle
+            })
+            matchingLogs = ((try? context.fetch(descriptor)) ?? []).filter { log in
+                log.domain == identity.domain && log.bilibiliIdentifier == identity.bilibiliIdentifier
+            }
         }
 
         let startOfDay = Calendar.current.startOfDay(for: now)
@@ -268,6 +308,7 @@ private struct SessionIdentity: Hashable {
     let groupedTitle: String
     let domain: String?
     let bilibiliIdentifier: String?
+    let pdfIdentifier: String?
 }
 
 private struct TrackedActivity {
@@ -278,6 +319,7 @@ private struct TrackedActivity {
     let bilibiliIdentifier: String?
     let bilibiliTidV2: Int?
     let fullUrl: String?
+    let pdfIdentifier: String?
 
     @MainActor
     init?(from tracker: ActivityTracker) {
@@ -291,11 +333,13 @@ private struct TrackedActivity {
         bilibiliIdentifier = tracker.currentBilibiliId
         bilibiliTidV2 = tracker.currentBilibiliTidV2
         fullUrl = tracker.currentDomain == "bilibili.com" ? nil : tracker.currentFullUrl
+        pdfIdentifier = tracker.currentPdfIdentifier
         identity = SessionIdentity(
             appName: appName,
             groupedTitle: groupedTitle,
             domain: domain,
-            bilibiliIdentifier: bilibiliIdentifier
+            bilibiliIdentifier: bilibiliIdentifier,
+            pdfIdentifier: pdfIdentifier
         )
     }
 }
@@ -309,6 +353,7 @@ private struct ActiveSession {
     let bilibiliIdentifier: String?
     let bilibiliTidV2: Int?
     let fullUrl: String?
+    let pdfIdentifier: String?
 }
 
 private struct DurationBaseline {

@@ -97,6 +97,7 @@ struct PreparedLog: Identifiable, Sendable {
     let isPDF: Bool
     let isWebsite: Bool
     let isStudy: Bool
+    let pdfIdentifier: String?
     var id: PreparedLogIdentity { identity }
 
     var endTime: Date {
@@ -113,7 +114,16 @@ struct PreparedLog: Identifiable, Sendable {
         // 2. 解析域名。如果有域名，无论是否在白名单，均保留以支持网站统计与分类。
         let resolvedDomain = Self.resolveDomain(for: log, whitelist: whitelist)
         
-        self.identity = PreparedLogIdentity(appName: log.appName, windowTitle: log.windowTitle, startTime: log.startTime, duration: log.duration, domain: log.domain, bilibiliIdentifier: log.bilibiliIdentifier, fullUrl: log.fullUrl)
+        self.identity = PreparedLogIdentity(
+            appName: log.appName,
+            windowTitle: log.windowTitle,
+            startTime: log.startTime,
+            duration: log.duration,
+            domain: log.domain,
+            bilibiliIdentifier: log.bilibiliIdentifier,
+            fullUrl: log.fullUrl,
+            pdfIdentifier: log.pdfIdentifier
+        )
         self.appName = log.appName
         self.windowTitle = log.windowTitle
         self.startTime = log.startTime
@@ -122,6 +132,7 @@ struct PreparedLog: Identifiable, Sendable {
         self.resolvedDomain = resolvedDomain
         self.bilibiliIdentifier = log.bilibiliIdentifier
         self.fullUrl = log.fullUrl
+        self.pdfIdentifier = log.pdfIdentifier
         
         // 3. 构建搜索文本，以便后续过滤与检索
         self.searchableText = [log.appName, log.windowTitle, resolvedDomain ?? "", log.fullUrl ?? ""].joined(separator: "\n").lowercased()
@@ -167,6 +178,7 @@ struct PreparedLogIdentity: Hashable, Sendable {
     let domain: String?
     let bilibiliIdentifier: String?
     let fullUrl: String?
+    let pdfIdentifier: String?
 }
 
 /// 周期对比数据模型
@@ -705,7 +717,14 @@ final class StatisticsEngine {
         }
         return grouped.compactMap { key, groupedLogs in
             guard let key else { return nil }
-            return RankingEntry(name: key, totalTime: groupedLogs.reduce(0) { $0 + $1.duration })
+            let displayName: String
+            if dimension == .item, groupedLogs.first?.isPDF == true {
+                // 如果是 PDF 且按单项展示，将唯一标识符映射回最近一次的文件名
+                displayName = groupedLogs.max(by: { $0.startTime < $1.startTime })?.windowTitle ?? key
+            } else {
+                displayName = key
+            }
+            return RankingEntry(name: displayName, totalTime: groupedLogs.reduce(0) { $0 + $1.duration })
         }
         .sorted { $0.totalTime > $1.totalTime }
     }
@@ -725,19 +744,40 @@ final class StatisticsEngine {
             }
             let detailGroups = Dictionary(grouping: groupedLogs) { detailKey(for: $0, dimension: dimension) }
             let details = detailGroups.map { detailKey, detailLogs in
-                SummaryDetail(name: detailKey, subtitle: detailSubtitle(for: detailLogs, dimension: dimension), totalTime: detailLogs.reduce(0) { $0 + $1.duration })
+                let displayName: String
+                if dimension == .app, detailLogs.first?.isPDF == true {
+                    // 如果是在“预览”应用下展示其打开过的 PDF 文件列表，将指纹键映射回最新的文件名
+                    displayName = detailLogs.max(by: { $0.startTime < $1.startTime })?.windowTitle ?? detailKey
+                } else {
+                    displayName = detailKey
+                }
+                return SummaryDetail(name: displayName, subtitle: detailSubtitle(for: detailLogs, dimension: dimension), totalTime: detailLogs.reduce(0) { $0 + $1.duration })
             }
             .sorted { $0.totalTime > $1.totalTime }
-            return GroupedSummary(name: key, totalTime: groupedLogs.reduce(0) { $0 + $1.duration }, details: details)
+            
+            let displayGroupName: String
+            if dimension == .item, groupedLogs.first?.isPDF == true {
+                // 单项维度（Item）排行下的 PDF 显示最新文件名
+                displayGroupName = groupedLogs.max(by: { $0.startTime < $1.startTime })?.windowTitle ?? key
+            } else {
+                displayGroupName = key
+            }
+            return GroupedSummary(name: displayGroupName, totalTime: groupedLogs.reduce(0) { $0 + $1.duration }, details: details)
         }
         .sorted { $0.totalTime > $1.totalTime }
     }
 
     nonisolated private static func pdfSummaries(for logs: [PreparedLog]) -> [GroupedSummary] {
         let pdfLogs = logs.filter(\.isPDF)
-        let grouped = Dictionary(grouping: pdfLogs) { $0.windowTitle }
-        return grouped.map { title, titleLogs in
-            GroupedSummary(name: title, totalTime: titleLogs.reduce(0) { $0 + $1.duration }, details: [SummaryDetail(name: title, subtitle: titleLogs.first?.appName, totalTime: titleLogs.reduce(0) { $0 + $1.duration })])
+        // 使用 pdfIdentifier 作为唯一合并键，不存在特征码的传统数据退回到 windowTitle
+        let grouped = Dictionary(grouping: pdfLogs) { $0.pdfIdentifier ?? $0.windowTitle }
+        return grouped.map { key, titleLogs in
+            let latestTitle = titleLogs.max(by: { $0.startTime < $1.startTime })?.windowTitle ?? key
+            return GroupedSummary(
+                name: latestTitle,
+                totalTime: titleLogs.reduce(0) { $0 + $1.duration },
+                details: [SummaryDetail(name: latestTitle, subtitle: titleLogs.first?.appName, totalTime: titleLogs.reduce(0) { $0 + $1.duration })]
+            )
         }
         .sorted { $0.totalTime > $1.totalTime }
     }
@@ -770,13 +810,23 @@ final class StatisticsEngine {
         switch dimension {
         case .app: return log.appName
         case .domain: return log.resolvedDomain
-        case .item: return log.windowTitle
+        case .item:
+            // 如果是 PDF，我们使用唯一指纹作为排行的汇总键，合并同文件重命名产生的多项记录
+            if log.isPDF {
+                return log.pdfIdentifier ?? log.windowTitle
+            }
+            return log.windowTitle
         }
     }
 
     nonisolated private static func detailKey(for log: PreparedLog, dimension: RankingDimension) -> String {
         switch dimension {
-        case .app: return log.windowTitle
+        case .app:
+            // 预览 App 下展示 PDF 文档明细时，同样以唯一指纹作为合并键
+            if log.isPDF {
+                return log.pdfIdentifier ?? log.windowTitle
+            }
+            return log.windowTitle
         case .domain: return log.resolvedDomain ?? log.appName
         case .item: return log.resolvedDomain ?? log.appName
         }
