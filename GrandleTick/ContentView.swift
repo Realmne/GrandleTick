@@ -66,14 +66,14 @@ struct ContentView: View {
         if isUntracked {
             return "未在统计范围内"
         }
-        return isStudyActive ? "累计学习时间" : "累计娱乐时间"
+        return isStudyActive ? "今日学习总时长" : "今日娱乐总时长"
     }
     
     private var durationSubtitle: String {
         if isUntracked {
             return "切换到白名单内的应用或网站后会继续累计"
         }
-        return isStudyActive ? "正在记录学习专注时长" : "非白名单应用，归为娱乐时长"
+        return isStudyActive ? "今日专注学习累计" : "今日娱乐休闲累计"
     }
     
     var body: some View {

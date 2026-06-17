@@ -149,8 +149,14 @@ struct PreparedLog: Identifiable, Sendable {
             let isWhitelistedDomain = resolvedDomain.flatMap { domain in
                 whitelist.domains.contains { $0.lowercased() == domain.lowercased() }
             } ?? false
-            let isBilibiliEntertainment = resolvedDomain == "bilibili.com" && log.windowTitle == AppConfig.bilibiliEntertainmentTitle
-            isStudy = isWhitelistedDomain && !isBilibiliEntertainment
+            // B 站视频只有 bilibiliIdentifier 非空（API 确认知识区）才算学习，
+            // 与实时弹窗 isStudyActive 的判断逻辑保持完全一致。
+            // 不能用 windowTitle == "娱乐" 判断，因为 URL 获取失败的兜底路径会把 windowTitle 写成 "Bilibili"。
+            if resolvedDomain == "bilibili.com" {
+                isStudy = log.bilibiliIdentifier != nil
+            } else {
+                isStudy = isWhitelistedDomain
+            }
         } else if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
             isStudy = isPDF
         } else {
