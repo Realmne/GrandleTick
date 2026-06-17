@@ -20,6 +20,9 @@ struct ContentView: View {
         
         let appName = usageManager.tracker.currentAppName
         let windowTitle = usageManager.tracker.currentWindowTitle
+        // groupedTitle 是用于分类统计的标题：B 站非知识类视频会被设为"娱乐"，
+        // 而 windowTitle（displayTitle）保留的是视频真实标题，不能用来判断分类。
+        let groupedTitle = usageManager.tracker.currentGroupedTitle
         let domain = usageManager.tracker.currentDomain
         
         let lowercasedAppName = appName.lowercased()
@@ -29,7 +32,9 @@ struct ContentView: View {
         if isWebsite {
             guard let domain else { return false }
             let isWhitelistedDomain = WhitelistManager.shared.whitelistedDomains.contains { $0.lowercased() == domain.lowercased() }
-            let isBilibiliEntertainment = domain == "bilibili.com" && windowTitle == AppConfig.bilibiliEntertainmentTitle
+            // 必须用 groupedTitle 来判断：B 站非知识区视频的 groupedTitle 被设为 "娱乐"，
+            // 而 windowTitle 是视频的真实标题（如"【4K顶级修复】《止战之殇》"），永远不等于 "娱乐"。
+            let isBilibiliEntertainment = domain == "bilibili.com" && groupedTitle == AppConfig.bilibiliEntertainmentTitle
             return isWhitelistedDomain && !isBilibiliEntertainment
         } 
         
