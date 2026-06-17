@@ -20,22 +20,26 @@ struct ContentView: View {
         
         let appName = usageManager.tracker.currentAppName
         let windowTitle = usageManager.tracker.currentWindowTitle
-        // groupedTitle 是用于分类统计的标题：B 站非知识类视频会被设为"娱乐"，
-        // 而 windowTitle（displayTitle）保留的是视频真实标题，不能用来判断分类。
-        let groupedTitle = usageManager.tracker.currentGroupedTitle
         let domain = usageManager.tracker.currentDomain
         
         let lowercasedAppName = appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
         
-        // 1. 如果是浏览器，需要进一步校验域名是否在白名单内，且排除 Bilibili 娱乐类视频。
+        // 1. 如果是浏览器，需要进一步校验域名是否在白名单内，并对 B 站做特殊处理。
         if isWebsite {
             guard let domain else { return false }
             let isWhitelistedDomain = WhitelistManager.shared.whitelistedDomains.contains { $0.lowercased() == domain.lowercased() }
-            // 必须用 groupedTitle 来判断：B 站非知识区视频的 groupedTitle 被设为 "娱乐"，
-            // 而 windowTitle 是视频的真实标题（如"【4K顶级修复】《止战之殇》"），永远不等于 "娱乐"。
-            let isBilibiliEntertainment = domain == "bilibili.com" && groupedTitle == AppConfig.bilibiliEntertainmentTitle
-            return isWhitelistedDomain && !isBilibiliEntertainment
+            
+            // B 站视频必须以 bilibiliIdentifier 非空为唯一判断依据：
+            // - bilibiliIdentifier 只有在 API 确认为知识区（tidV2 在白名单中）时才会被赋值。
+            // - 当 URL 获取失败走窗口标题兜底路径时，identifier 为 nil，
+            //   此时 groupedTitle 可能是 "Bilibili" 而非 "娱乐"，不能用 groupedTitle 做判断，
+            //   必须直接以 identifier 为准，否则所有 B 站内容都会被误归为学习。
+            if domain == "bilibili.com" {
+                return usageManager.tracker.currentBilibiliId != nil
+            }
+            
+            return isWhitelistedDomain
         } 
         
         // 2. 如果是 macOS 预览 App，需要明确判断是否正在查看 PDF 文件以归为学习。
