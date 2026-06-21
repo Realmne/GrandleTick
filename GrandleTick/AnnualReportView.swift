@@ -8,6 +8,10 @@ struct AnnualReportView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     
+    // 1. 定义高对比度的年度报告专用配色（避免深蓝色/深紫色在暗色背景下不可见）。
+    static let studyColor = Color(red: 0.4, green: 0.8, blue: 1.0)
+    static let entertainmentColor = Color(red: 0.9, green: 0.5, blue: 1.0)
+    
     @State private var engine = StatisticsEngine()
     @State private var currentPage = 0
     @State private var isLoading = true
@@ -47,9 +51,10 @@ struct AnnualReportView: View {
                     Button(action: { dismiss() }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 24))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.white.opacity(0.5))
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
                     .padding(20)
                 }
                 Spacer()
@@ -136,6 +141,7 @@ struct AnnualReportView: View {
                         .padding(10)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .disabled(currentPage == 0)
                 
                 Spacer()
@@ -144,7 +150,7 @@ struct AnnualReportView: View {
                 HStack(spacing: 8) {
                     ForEach(0..<totalPages, id: \.self) { index in
                         Circle()
-                            .fill(index == currentPage ? Color.blue : Color.white.opacity(0.25))
+                            .fill(index == currentPage ? AnnualReportView.studyColor : Color.white.opacity(0.25))
                             .frame(width: index == currentPage ? 8 : 6, height: index == currentPage ? 8 : 6)
                             .animation(.spring(response: 0.3), value: currentPage)
                     }
@@ -159,6 +165,7 @@ struct AnnualReportView: View {
                         .padding(10)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .disabled(currentPage == totalPages - 1)
             }
             .padding(.horizontal, 32)
@@ -232,7 +239,7 @@ private struct CoverCard: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 46))
                 .foregroundStyle(
-                    LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    LinearGradient(colors: [AnnualReportView.studyColor, AnnualReportView.entertainmentColor], startPoint: .topLeading, endPoint: .bottomTrailing)
                 )
                 .scaleEffect(appear ? 1.0 : 0.7)
                 .opacity(appear ? 1.0 : 0.0)
@@ -289,7 +296,7 @@ private struct FocusRatioCard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("专注学习时长")
                         .font(.caption)
-                        .foregroundColor(.blue.opacity(0.8))
+                        .foregroundColor(AnnualReportView.studyColor)
                     Text(formatDetailedDuration(studyDuration))
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(.white)
@@ -302,7 +309,7 @@ private struct FocusRatioCard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("娱乐休闲时长")
                         .font(.caption)
-                        .foregroundColor(.purple.opacity(0.8))
+                        .foregroundColor(AnnualReportView.entertainmentColor)
                     Text(formatDetailedDuration(entertainmentDuration))
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(.white)
@@ -315,9 +322,9 @@ private struct FocusRatioCard: View {
                 VStack(spacing: 8) {
                     GeometryReader { geo in
                         HStack(spacing: 0) {
-                            Color.blue
+                            AnnualReportView.studyColor
                                 .frame(width: geo.size.width * (appear ? studyRatio : 0))
-                            Color.purple
+                            AnnualReportView.entertainmentColor
                                 .frame(width: geo.size.width * (1.0 - (appear ? studyRatio : 0)))
                         }
                         .cornerRadius(6)
@@ -328,11 +335,11 @@ private struct FocusRatioCard: View {
                     HStack {
                         Text(String(format: "学习占比 %.0f%%", studyRatio * 100))
                             .font(.caption)
-                            .foregroundColor(.blue)
+                            .foregroundColor(AnnualReportView.studyColor)
                         Spacer()
                         Text(String(format: "娱乐占比 %.0f%%", (1.0 - studyRatio) * 100))
                             .font(.caption)
-                            .foregroundColor(.purple)
+                            .foregroundColor(AnnualReportView.entertainmentColor)
                     }
                     .opacity(appear ? 1.0 : 0.0)
                 }
@@ -405,13 +412,13 @@ private struct RhythmCard: View {
                 if let latest {
                     HStack(spacing: 16) {
                         ZStack {
-                            Circle().fill(Color.indigo.opacity(0.15)).frame(width: 48, height: 48)
-                            Image(systemName: "moon.stars.fill").font(.system(size: 20)).foregroundColor(.indigo)
+                            Circle().fill(Color(red: 0.65, green: 0.55, blue: 1.0).opacity(0.15)).frame(width: 48, height: 48)
+                            Image(systemName: "moon.stars.fill").font(.system(size: 20)).foregroundColor(Color(red: 0.7, green: 0.6, blue: 1.0))
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("最晚的守夜专注")
-                                .font(.caption).foregroundColor(.white.opacity(0.5))
+                               .font(.caption).foregroundColor(.white.opacity(0.5))
                             Text(formatClock(latest))
                                 .font(.system(size: 20, weight: .bold)).foregroundColor(.white)
                             Text("夜阑人静，微弱窗口光芒伴你前行")
@@ -451,7 +458,7 @@ private struct CompanionCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("年度书册 (PDF)", systemImage: "doc.richtext.fill")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.blue.opacity(0.9))
+                        .foregroundColor(AnnualReportView.studyColor)
                     
                     if let topPDF = topPDFs.first {
                         companionRow(name: topPDF.name, duration: topPDF.totalTime)
@@ -466,7 +473,7 @@ private struct CompanionCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("年度学习网站", systemImage: "globe")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.purple.opacity(0.9))
+                        .foregroundColor(AnnualReportView.entertainmentColor)
                     
                     if let topWeb = topWebsites.first {
                         companionRow(name: topWeb.name, duration: topWeb.totalTime)
@@ -702,6 +709,7 @@ private struct ArchetypeCard: View {
                 .background(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .opacity(appear ? 1.0 : 0.0)
             .padding(.bottom, 24)
         }

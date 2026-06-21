@@ -6,6 +6,7 @@ import Charts
 
 struct StatisticsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var engine = StatisticsEngine()
     @State private var whitelist = WhitelistManager.shared
@@ -177,15 +178,29 @@ struct StatisticsView: View {
     // MARK: - Subviews
 
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                Color(red: 0.97, green: 0.96, blue: 0.92),
-                Color(red: 0.93, green: 0.96, blue: 0.98),
-                Color(red: 0.98, green: 0.95, blue: 0.94)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Group {
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.08, green: 0.08, blue: 0.12),
+                        Color(red: 0.05, green: 0.05, blue: 0.08),
+                        Color(red: 0.10, green: 0.06, blue: 0.12)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.97, green: 0.96, blue: 0.92),
+                        Color(red: 0.93, green: 0.96, blue: 0.98),
+                        Color(red: 0.98, green: 0.95, blue: 0.94)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
         .ignoresSafeArea()
     }
 
@@ -486,6 +501,7 @@ struct StatisticsView: View {
 // MARK: - Supporting Subviews & Components
 
 private struct OverviewCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let value: String
     let subtitle: String
@@ -510,14 +526,7 @@ private struct OverviewCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.white.opacity(0.78))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.72), lineWidth: 1)
-        )
+        .premiumCard(cornerRadius: 18)
     }
 }
 
@@ -596,8 +605,7 @@ private struct FilterSection: View {
             }
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.5), lineWidth: 1))
+        .premiumCard(cornerRadius: 22, isSecondary: true)
     }
 
     private var hasActiveFilters: Bool {
@@ -622,6 +630,7 @@ private struct FilterChip: View {
 }
 
 private struct RangeTrendSection: View {
+    @Environment(\.colorScheme) private var colorScheme
     let daySummaries: [DaySummary]
     let selectedDay: Date?
     let onSelectDay: (Date) -> Void
@@ -634,11 +643,13 @@ private struct RangeTrendSection: View {
             Text("每日专注趋势").font(.headline)
             Chart(daySummaries) { daySummary in
                 BarMark(x: .value("日期", daySummary.date, unit: .day), y: .value("时长", daySummary.totalTime / 3600))
-                .foregroundStyle(isHighlighted(daySummary.date) ? Color.blue.opacity(0.8) : Color.blue.opacity(0.3))
-                .cornerRadius(5)
+                .foregroundStyle(barGradient(for: daySummary.date, colorScheme: colorScheme))
+                .cornerRadius(6)
                 .annotation(position: .top, alignment: .center) {
                     if isHighlighted(daySummary.date) {
-                        Text(formatDuration(daySummary.totalTime)).font(.system(size: 9, weight: .semibold, design: .monospaced)).foregroundColor(.secondary)
+                        Text(formatDuration(daySummary.totalTime))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(colorScheme == .dark ? .white : .secondary)
                     }
                 }
             }
@@ -656,8 +667,7 @@ private struct RangeTrendSection: View {
             }
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
         .onAppear { highlightedDay = selectedDay }
         .onChange(of: selectedDay) { _, newValue in commitTask?.cancel(); if !isSameDay(highlightedDay, newValue) { highlightedDay = newValue } }
     }
@@ -683,6 +693,23 @@ private struct RangeTrendSection: View {
     private func formatShortDate(_ date: Date) -> String {
         let comps = Calendar.current.dateComponents([.month, .day], from: date)
         return "\(comps.month ?? 0)/\(comps.day ?? 0)"
+    }
+    
+    // 2. 为趋势图设计带平滑渐变的柱状样式，增强光泽感和交互高亮对比。
+    private func barGradient(for date: Date, colorScheme: ColorScheme) -> LinearGradient {
+        if isHighlighted(date) {
+            return LinearGradient(
+                colors: [Color(red: 0.25, green: 0.65, blue: 1.0), Color(red: 0.65, green: 0.45, blue: 0.95)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else {
+            return LinearGradient(
+                colors: [Color.blue.opacity(colorScheme == .dark ? 0.35 : 0.22), Color.blue.opacity(colorScheme == .dark ? 0.15 : 0.08)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
     }
 }
 
@@ -761,8 +788,7 @@ private struct RankingSection: View {
             }
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
     }
 }
 
@@ -799,8 +825,7 @@ private struct SelectedDaySection: View {
             }
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
     }
 }
 
@@ -895,8 +920,8 @@ private struct LearningVsEntertainmentDonutCard: View {
 
             HStack(spacing: 16) {
                 let data = [
-                    Segment(type: "学习时间", duration: studyDuration, color: Color.blue.opacity(0.65)),
-                    Segment(type: "娱乐时间", duration: entertainmentDuration, color: Color.orange.opacity(0.55))
+                    Segment(type: "学习时间", duration: studyDuration, color: Color(red: 0.2, green: 0.6, blue: 1.0)),
+                    Segment(type: "娱乐时间", duration: entertainmentDuration, color: Color(red: 1.0, green: 0.45, blue: 0.25))
                 ].filter { $0.duration > 0 }
 
                 Chart(data) { segment in
@@ -922,7 +947,7 @@ private struct LearningVsEntertainmentDonutCard: View {
                                     .foregroundColor(.secondary)
                                 Text("\(Int((studyShare * 100).rounded()))%")
                                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                                    .foregroundColor(Color.blue.opacity(0.85))
+                                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 1.0))
                             }
                             .position(x: frameWidth / 2, y: frameHeight / 2)
                         }
@@ -930,8 +955,8 @@ private struct LearningVsEntertainmentDonutCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    ReportLegendStat(title: "学习专注", value: formatDuration(studyDuration), tint: Color.blue.opacity(0.65))
-                    ReportLegendStat(title: "娱乐消遣", value: formatDuration(entertainmentDuration), tint: Color.orange.opacity(0.55))
+                    ReportLegendStat(title: "学习专注", value: formatDuration(studyDuration), tint: Color(red: 0.2, green: 0.6, blue: 1.0))
+                    ReportLegendStat(title: "娱乐消遣", value: formatDuration(entertainmentDuration), tint: Color(red: 1.0, green: 0.45, blue: 0.25))
                 }
 
                 Spacer()
@@ -939,8 +964,7 @@ private struct LearningVsEntertainmentDonutCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
         .onAppear {
             withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
                 animateData = true
@@ -967,9 +991,9 @@ private struct ContentCategoryDonutCard: View {
     private var categories: [Category] {
         let appDuration = max(0, totalDuration - websiteDuration - pdfDuration)
         return [
-            Category(name: "PDF 文档", duration: pdfDuration, color: Color.purple.opacity(0.55)),
-            Category(name: "网页浏览", duration: websiteDuration, color: Color.teal.opacity(0.55)),
-            Category(name: "原生应用", duration: appDuration, color: Color.blue.opacity(0.65))
+            Category(name: "PDF 文档", duration: pdfDuration, color: Color(red: 0.68, green: 0.45, blue: 0.95)),
+            Category(name: "网页浏览", duration: websiteDuration, color: Color(red: 0.12, green: 0.72, blue: 0.72)),
+            Category(name: "原生应用", duration: appDuration, color: Color(red: 0.22, green: 0.58, blue: 0.95))
         ].filter { $0.duration > 0 }
     }
 
@@ -1016,8 +1040,7 @@ private struct ContentCategoryDonutCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
         .onAppear {
             withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
                 animateData = true
@@ -1076,8 +1099,7 @@ private struct RhythmSection: View {
             }
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
     }
 }
 
@@ -1099,7 +1121,7 @@ private struct ReportRhythmHourlyChart: View {
                 )
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [Color.purple.opacity(0.22), Color.purple.opacity(0.01)],
+                        colors: [Color(red: 0.68, green: 0.45, blue: 0.95).opacity(0.3), Color(red: 0.68, green: 0.45, blue: 0.95).opacity(0.01)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -1111,8 +1133,8 @@ private struct ReportRhythmHourlyChart: View {
                     x: .value("时间", "\(item.hour)点"),
                     y: .value("时长", item.value)
                 )
-                .foregroundStyle(Color.purple.opacity(0.60))
-                .lineStyle(StrokeStyle(lineWidth: 2.0))
+                .foregroundStyle(Color(red: 0.68, green: 0.45, blue: 0.95))
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
             }
         }
         .frame(height: 120)
@@ -1175,10 +1197,10 @@ private struct AppFocusDonutCard: View {
     @State private var animateData = false
 
     private let palette: [Color] = [
-        Color.blue.opacity(0.65),
-        Color.purple.opacity(0.55),
-        Color.teal.opacity(0.55),
-        Color.pink.opacity(0.55)
+        Color(red: 0.22, green: 0.58, blue: 0.95), // Vibrant Blue
+        Color(red: 0.68, green: 0.45, blue: 0.95), // Vibrant Purple
+        Color(red: 0.12, green: 0.72, blue: 0.72), // Vibrant Teal
+        Color(red: 1.00, green: 0.45, blue: 0.35)  // Vibrant Coral Pink
     ]
 
     struct Segment: Identifiable {
@@ -1250,8 +1272,7 @@ private struct AppFocusDonutCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
         .onAppear {
             withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.2)) {
                 animateData = true
@@ -1317,8 +1338,7 @@ private struct ReportRankingPanel: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 22).fill(Color.white.opacity(0.78)))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.72), lineWidth: 1))
+        .premiumCard(cornerRadius: 22)
     }
 }
 
@@ -1346,12 +1366,47 @@ private struct ReportLegendStat: View {
 }
 
 private struct ReportPagerButton: View {
+    @Environment(\.colorScheme) private var colorScheme
     let systemImage: String
     let isDisabled: Bool
     let action: () -> Void
 
     @State private var isHovered = false
     @State private var isPressed = false
+
+    // 1. 获取根据主题与交互状态动态计算的背景填充色，避免嵌套三元运算符导致编译器超时。
+    private var buttonBgColor: Color {
+        if colorScheme == .dark {
+            if isDisabled {
+                return Color.black.opacity(0.2)
+            } else if isPressed {
+                return Color.white.opacity(0.2)
+            } else if isHovered {
+                return Color.white.opacity(0.15)
+            } else {
+                return Color.white.opacity(0.08)
+            }
+        } else {
+            if isDisabled {
+                return Color.white.opacity(0.34)
+            } else if isPressed {
+                return Color.white.opacity(0.96)
+            } else if isHovered {
+                return Color.white.opacity(0.90)
+            } else {
+                return Color.white.opacity(0.72)
+            }
+        }
+    }
+
+    // 2. 获取对应的边框颜色，防止暗色模式下过度刺眼，实现柔和边框。
+    private var buttonBorderColor: Color {
+        if colorScheme == .dark {
+            return isDisabled ? Color.white.opacity(0.02) : Color.white.opacity(0.08)
+        } else {
+            return isDisabled ? Color.black.opacity(0.04) : Color.black.opacity(isHovered ? 0.10 : 0.07)
+        }
+    }
 
     var body: some View {
         Button(action: action) {
@@ -1361,11 +1416,11 @@ private struct ReportPagerButton: View {
                 .frame(width: 28, height: 28)
                 .background(
                     Circle()
-                        .fill(isDisabled ? Color.white.opacity(0.34) : isPressed ? Color.white.opacity(0.96) : isHovered ? Color.white.opacity(0.90) : Color.white.opacity(0.72))
+                        .fill(buttonBgColor)
                 )
                 .overlay(
                     Circle()
-                        .stroke(isDisabled ? Color.black.opacity(0.04) : Color.black.opacity(isHovered ? 0.10 : 0.07), lineWidth: 0.8)
+                        .stroke(buttonBorderColor, lineWidth: 0.8)
                 )
                 .scaleEffect(isPressed && !isDisabled ? 0.96 : 1)
         }
@@ -1397,8 +1452,36 @@ private struct PressObserverStyle: ButtonStyle {
     }
 }
 
+// MARK: - Premium Card Styling Extension
+
+struct PremiumCardBackground: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    var cornerRadius: CGFloat = 22
+    var isSecondary: Bool = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(colorScheme == .dark ?
+                          Color.black.opacity(isSecondary ? 0.25 : 0.45) :
+                          Color.white.opacity(isSecondary ? 0.6 : 0.78))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(colorScheme == .dark ?
+                            Color.white.opacity(isSecondary ? 0.05 : 0.08) :
+                            Color.white.opacity(isSecondary ? 0.5 : 0.72), lineWidth: 1)
+            )
+    }
+}
+
 extension View {
     fileprivate func pressing(_ onPress: @escaping (Bool) -> Void) -> some View {
         buttonStyle(PressObserverStyle(onPress: onPress))
+    }
+    
+    fileprivate func premiumCard(cornerRadius: CGFloat = 22, isSecondary: Bool = false) -> some View {
+        self.modifier(PremiumCardBackground(cornerRadius: cornerRadius, isSecondary: isSecondary))
     }
 }
