@@ -35,14 +35,37 @@ struct AnnualReportView: View {
             }
             .frame(width: 480, height: 640)
             .background(
-                VisualEffectView(material: .hudWindow, blendingMode: .withinWindow)
-                    .cornerRadius(24)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                    )
+                ZStack {
+                    // 1. 采用微弱蔚蓝至靛紫的渐变半透明层，消除原本沉闷突兀的灰色 HUD 质感，使卡片背景与极光动感背景更好地融为一体。
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.10, green: 0.12, blue: 0.24).opacity(0.40),
+                                    Color(red: 0.05, green: 0.06, blue: 0.12).opacity(0.60)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    
+                    // 2. 结合更轻量透光的 underWindowBackground 材质，让底层极光的色彩能够自然穿透，消除沉闷感。
+                    VisualEffectView(material: .underWindowBackground, blendingMode: .withinWindow)
+                        .cornerRadius(24)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [.white.opacity(0.18), .white.opacity(0.04)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
             )
-            .shadow(color: Color.black.opacity(0.4), radius: 30, x: 0, y: 15)
+            .shadow(color: Color.black.opacity(0.35), radius: 25, x: 0, y: 12)
             
             // 3. 右上角浮动关闭按钮。
             VStack {
