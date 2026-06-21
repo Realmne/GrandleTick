@@ -16,6 +16,7 @@ struct StatisticsView: View {
     @State private var selectedAppFilter: String?
     @State private var selectedDomainFilter: String?
     @State private var searchDebounceTask: Task<Void, Never>?
+    @State private var showAnnualReport = false
 
     private let calendar = Calendar.current
 
@@ -153,6 +154,10 @@ struct StatisticsView: View {
         .frame(width: AppConfig.statisticsWidth, height: AppConfig.statisticsHeight)
         .ignoresSafeArea(.all, edges: .top)
         .onAppear { refreshRangeData() }
+        .sheet(isPresented: $showAnnualReport) {
+            AnnualReportView()
+                .modelContext(modelContext)
+        }
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
             refreshRangeData()
         }
@@ -189,9 +194,27 @@ struct StatisticsView: View {
         VStack(spacing: 12) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("数据中心")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.primary.opacity(0.88))
+                    HStack(spacing: 8) {
+                        Text("数据中心")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.primary.opacity(0.88))
+                        
+                        Button(action: { showAnnualReport = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                Text("年度报告")
+                            }
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.vertical, 3)
+                            .padding(.horizontal, 8)
+                            .background(
+                                Capsule()
+                                    .fill(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
                     Text("所有专注和活动统计回顾")
                         .font(.caption)
                         .foregroundColor(.secondary)
