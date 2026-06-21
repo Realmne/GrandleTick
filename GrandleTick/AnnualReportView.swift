@@ -86,15 +86,28 @@ struct AnnualReportView: View {
             // 1. 加载本年度学习与娱乐的相关统计数据。
             loadYearlyData()
             
-            // 2. 异步获取承载当前年度报告视图的 NSWindow，并将其底色设为透明并刷新阴影，从而消除默认 Sheet 容器在圆角外侧留下的灰色/白色底色框架。
+            // 2. 异步获取承载当前年度报告视图的 NSWindow，并将其底色和边框设为透明。
+            // 解决 macOS 默认 Sheet 容器在圆角外侧留下的白色/灰色底色与方形框视觉 Bug。
             DispatchQueue.main.async {
-                if let window = NSApplication.shared.windows.first(where: { w in
-                    w.isVisible && (abs(w.frame.width - 480) < 5) && (abs(w.frame.height - 640) < 5)
-                }) {
-                    window.backgroundColor = .clear
-                    window.isOpaque = false
-                    window.hasShadow = true
-                    window.invalidateShadow()
+                // 连续在多个时段尝试寻找并清理，防止生命周期回调时 NSWindow 尚未完全挂载到应用树上。
+                for delay in [0.0, 0.05, 0.1, 0.15, 0.2] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        for window in NSApplication.shared.windows {
+                            // 查找带有 Sheet 属性的窗口（即 sheetParent 非空，或者类名包含 Sheet 的窗口）
+                            if window.sheetParent != nil || window.className.contains("Sheet") {
+                                window.backgroundColor = .clear
+                                window.isOpaque = false
+                                window.hasShadow = true
+                                window.invalidateShadow()
+                                
+                                // 同时也把其 contentView 的宿主 layer 设为透明，彻底防止 AppKit 默认白色背景重绘。
+                                if let contentView = window.contentView {
+                                    contentView.wantsLayer = true
+                                    contentView.layer?.backgroundColor = NSColor.clear.cgColor
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
