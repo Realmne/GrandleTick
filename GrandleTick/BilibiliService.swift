@@ -21,6 +21,7 @@ enum BilibiliService {
     // 2. 通过 B 站 API 获取视频元数据。
     // 包括标题和分区 ID，用于判断视频是否属于知识类。
     static func fetchMetadata(for identifier: String) async -> BilibiliVideoMetadata? {
+        // 1. 构建 B 站 Web View 接口请求 URL 并配置超时及 User-Agent。
         guard let url = URL(string: "\(AppConfig.bilibiliAPIUrl)\(identifier)") else {
             return nil
         }
@@ -31,6 +32,7 @@ enum BilibiliService {
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
 
         do {
+            // 2. 发起异步网络请求并解析 JSON 数据。
             let (data, _) = try await URLSession.shared.data(for: request)
             let response = try JSONDecoder().decode(BilibiliViewResponse.self, from: data)
 
@@ -42,6 +44,7 @@ enum BilibiliService {
             let title = responseData.title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty else { return nil }
 
+            // 3. 提取分区 ID 并依据分区白名单判定是否为知识类视频。
             return BilibiliVideoMetadata(
                 title: title,
                 tidV2: tidV2,

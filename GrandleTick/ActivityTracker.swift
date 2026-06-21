@@ -33,10 +33,10 @@ final class ActivityTracker {
     private var pendingBrowserURLRefreshKeys: Set<BrowserURLRefreshKey> = []
     private var prefetchedBrowserURLResults: [BrowserURLRefreshKey: BrowserURLRefreshResult] = [:]
     private var pendingBilibiliMetadataRequests: Set<String> = []
-    private var activationObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var activationObserver: NSObjectProtocol?
     private var observedProcessId: pid_t?
-    private var activeAppObserver: AXObserver?
-    private var observedFocusedWindow: AXUIElement?
+    nonisolated(unsafe) private var activeAppObserver: AXObserver?
+    nonisolated(unsafe) private var observedFocusedWindow: AXUIElement?
     private var lastPublishedActivity: PublishedActivityState?
 
     init() {
@@ -53,6 +53,21 @@ final class ActivityTracker {
                 // 让上层 UsageManager 不必等下一次计时器 tick 才切换会话。
                 self?.track(forceRefresh: true)
             }
+        }
+    }
+
+    deinit {
+        // 1. 移除系统前台应用切换通知观察者。
+        if let observer = activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        
+        // 2. 释放 AXObserver 观察者，并从运行循环中移除关联的源，防止观察回调访问已被销毁的实例（野指针崩溃）。
+        if let observer = activeAppObserver {
+            if let window = observedFocusedWindow {
+                AXObserverRemoveNotification(observer, window, kAXTitleChangedNotification as CFString)
+            }
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         }
     }
 
@@ -77,6 +92,7 @@ final class ActivityTracker {
 
         resetBrowserMetadata()
 
+        // 3. 获取前台最上层应用，若获取不到或为当前 App，则清理状态。
         guard let activeApp = NSWorkspace.shared.frontmostApplication else {
             removeActiveAppObserver()
             clearTrackedState()
@@ -88,6 +104,7 @@ final class ActivityTracker {
             return
         }
 
+        // 4. 辅助功能权限受阻时，向界面更新状态，提示开启辅助功能权限。
         if !cachedAccessibilityTrusted {
             removeActiveAppObserver()
             currentAppName = "权限受阻"
@@ -101,20 +118,20 @@ final class ActivityTracker {
         let bundleId = activeApp.bundleIdentifier ?? ""
         let processId = activeApp.processIdentifier
 
-        // 1. 过滤掉不属于用户前台交互的应用（如系统服务、守护进程、屏保等）
+        // 5. 过滤掉不属于用户前台交互的应用（如系统服务、守护进程、屏保等）。
         guard isUserFacingApp(activeApp) else {
             removeActiveAppObserver()
             clearTrackedState()
             return
         }
 
-        // 3. 对当前前台 App 安装 AXObserver，补齐 NSWorkspace 只通知“应用切换”、
-        // 不通知“同一应用内切窗口/标题变化”的空白。
+        // 6. 对当前前台 App 安装 AXObserver，补齐 NSWorkspace 只通知“应用切换”、不通知“同一应用内切窗口/标题变化”的空白。
         installActiveAppObserverIfNeeded(processId: processId)
 
         let isBrowserApp = BrowserService.isBrowserApp(bundleId: bundleId)
         let isPreviewApp = bundleId == "com.apple.Preview" || appName == "预览"
 
+        // 7. 获取当前焦点窗口及窗口标题。
         let appRef = AXUIElementCreateApplication(processId)
         var windowRef: CFTypeRef?
         let focusedWindowResult = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef)
@@ -133,8 +150,7 @@ final class ActivityTracker {
         }
 
         if isPreviewApp {
-            // 2. 针对预览 App：如果识别为 PDF 文档，则以 PDF 特殊路径进行匹配和上报；
-            // 否则（如打开的是图片或处于空窗状态），则不拦截并落入后面的常规应用处理，记为娱乐/休闲时长。
+            // 8. 针对预览 App：如果识别为 PDF 文档，则以 PDF 特殊路径进行匹配和上报；否则（如打开的是图片或处于空窗状态），则不拦截并落入后面的常规应用处理，记为娱乐/休闲时长。
             if let normalizedTitle = normalizedPreviewPDFTitle(from: rawTitle) {
                 // (1) 复制焦点窗口的 AXDocument 属性获取真实的 file:// 协议路径
                 var docRef: CFTypeRef?
@@ -255,6 +271,7 @@ final class ActivityTracker {
         rawTitle: String,
         browserUrl: String?
     ) {
+        // 1. 从浏览器 URL 中提取域名，并进行白名单域名匹配。
         let matchedDomain: String? = {
             guard let browserUrl,
                   let url = URL(string: browserUrl),
@@ -264,6 +281,7 @@ final class ActivityTracker {
             return matchedWhitelistedDomainFromHost(host) ?? host
         }()
 
+        // 2. 如果是 Bilibili 网站，则分流到 Bilibili 的解析逻辑中。
         if matchedDomain == "bilibili.com",
            let browserUrl {
             resolveBilibiliSnapshot(
@@ -276,6 +294,7 @@ final class ActivityTracker {
             return
         }
 
+        // 3. 检查本地标题缓存以避免重复的字符串解析。
         if let cachedBrowserTitleData = ActivityTracker.titleCache[browserTitleCacheKey(originalTitle: rawTitle, domain: matchedDomain)] {
             let snapshot = TrackedSnapshot(
                 processId: processId,

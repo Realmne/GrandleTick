@@ -218,6 +218,12 @@ struct ContentView: View {
             window?.close()
         }
         
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+            if ContentView.whitelistWindow === window {
+                ContentView.whitelistWindow = nil
+            }
+        }
+        
         ContentView.whitelistWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -256,6 +262,7 @@ struct ContentView: View {
     }
     
     private func showResetConfirmation() {
+        // 1. 激活 App 并配置警告弹窗属性。
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "危险操作：清空所有历史数据"
@@ -264,10 +271,12 @@ struct ContentView: View {
         alert.addButton(withTitle: "确定清空")
         alert.addButton(withTitle: "取消")
         
+        // 2. 插入文本输入框作为辅助视图。
         let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         inputField.placeholderString = requiredConfirmText
         alert.accessoryView = inputField
         
+        // 3. 以模态方式运行弹窗并根据输入文字判断是否执行清空。
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             if inputField.stringValue == requiredConfirmText {

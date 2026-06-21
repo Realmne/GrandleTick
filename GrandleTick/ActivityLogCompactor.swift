@@ -74,11 +74,13 @@ enum ActivityLogCompactor {
         var sourceDatabase: OpaquePointer?
         var destinationDatabase: OpaquePointer?
 
+        // 1. 打开源数据库。
         guard sqlite3_open_v2(sourceURL.path, &sourceDatabase, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             sqlite3_close(sourceDatabase)
             return
         }
 
+        // 2. 打开目标备份数据库。
         guard sqlite3_open_v2(destinationURL.path, &destinationDatabase, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             sqlite3_close(sourceDatabase)
             sqlite3_close(destinationDatabase)
@@ -90,11 +92,13 @@ enum ActivityLogCompactor {
             sqlite3_close(destinationDatabase)
         }
 
+        // 3. 初始化 SQLite 备份任务。
         guard let sourceDatabase, let destinationDatabase,
               let backup = sqlite3_backup_init(destinationDatabase, "main", sourceDatabase, "main") else {
             return
         }
 
+        // 4. 执行备份并清理资源。
         sqlite3_backup_step(backup, -1)
         sqlite3_backup_finish(backup)
     }

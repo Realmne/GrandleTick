@@ -17,8 +17,7 @@ class WhitelistManager {
     }
     
     init() {
-        // 1. 如果是首次启动，就写入默认的应用白名单和域名白名单。
-        // 2. 如果用户已经有旧数据，就继续沿用旧数据，不覆盖现有配置。
+        // 1. 如果是首次启动，就写入默认的应用和域名白名单。
         if UserDefaults.standard.object(forKey: "WhitelistedApps") == nil {
             UserDefaults.standard.set(systemDefaultApps, forKey: "WhitelistedApps")
         }
@@ -26,6 +25,7 @@ class WhitelistManager {
             UserDefaults.standard.set(systemDefaultDomains, forKey: "WhitelistedDomains")
         }
         
+        // 2. 如果用户已经有配置数据（或写入了默认数据），就将其加载到内存，保证运行时不覆盖现有配置。
         self.whitelistedApps = UserDefaults.standard.stringArray(forKey: "WhitelistedApps") ?? []
         self.whitelistedDomains = UserDefaults.standard.stringArray(forKey: "WhitelistedDomains") ?? []
     }

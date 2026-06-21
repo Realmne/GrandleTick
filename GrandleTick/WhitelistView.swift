@@ -147,12 +147,16 @@ struct WhitelistView: View {
     }
 
     private func addAppFromFinder() {
+        // 1. 创建并配置打开文件面板以允许选择应用程序。
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.application]
         panel.canChooseFiles = true
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        
+        // 2. 激活应用以保证面板显示在前台。
         NSApp.activate(ignoringOtherApps: true)
 
+        // 3. 运行面板并在用户确认选择后提取应用名称并加入白名单。
         if panel.runModal() == .OK, let selectedAppUrl = panel.url {
             let appName = (selectedAppUrl.lastPathComponent as NSString).deletingPathExtension
             whitelistManager.addApp(appName)
@@ -160,6 +164,7 @@ struct WhitelistView: View {
     }
 
     private func addDomainManually() {
+        // 1. 创建并配置输入框及弹窗属性。
         let alert = NSAlert()
         alert.messageText = "添加域名"
         alert.informativeText = "例如：github.com"
@@ -167,7 +172,11 @@ struct WhitelistView: View {
         alert.addButton(withTitle: "取消")
         let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
         alert.accessoryView = inputField
+        
+        // 2. 将输入框作为附加视图载入弹窗并激活前台。
         NSApp.activate(ignoringOtherApps: true)
+        
+        // 3. 运行弹窗并在用户确认后将输入的域名整理并加入白名单。
         if alert.runModal() == .alertFirstButtonReturn {
             whitelistManager.addDomain(inputField.stringValue)
         }

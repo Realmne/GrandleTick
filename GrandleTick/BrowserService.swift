@@ -4,6 +4,7 @@ enum BrowserService {
     // 1. 获取浏览器当前的活动标签页 URL。
     // 使用 AppleScript 是目前 macOS 上获取沙盒外浏览器 URL 的最可靠方式。
     static func fetchActiveURL(for appName: String) -> String? {
+        // 1. 根据浏览器名称生成对应的 AppleScript 脚本代码。
         let script: String
         if appName.contains("Safari") {
             script = "tell application \"Safari\" to return URL of front document"
@@ -15,6 +16,7 @@ enum BrowserService {
             return nil
         }
 
+        // 2. 实例化并执行 AppleScript，获取当前标签页的 URL 字符串。
         var error: NSDictionary?
         if let appleScript = NSAppleScript(source: script) {
             let result = appleScript.executeAndReturnError(&error)

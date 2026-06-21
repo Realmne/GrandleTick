@@ -15,6 +15,11 @@ enum ContentFilter: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
+/// 详细列表分类类型
+enum DetailCategory: String, Sendable {
+    case app, domain, pdf
+}
+
 /// 每日总计时长
 struct DaySummary: Identifiable, Sendable {
     let date: Date
@@ -541,6 +546,44 @@ final class StatisticsEngine {
         selectedDayPdfSummaries = Self.pdfSummaries(for: selectedLogs)
     }
 
+    /// 从数据库中删除特定日期和分类下的日志，并持久化保存
+    func deleteLogs(on selectedDay: Date?, category: DetailCategory, summaryName: String, detailName: String, modelContext: ModelContext) {
+        guard let selectedDay else { return }
+
+        // 1. 按照当前选中日期以及特定应用/域名/PDF定位需清理的日志标识。
+        let logsToDelete = rangeLogs.filter { prepared in
+            calendar.isDate(prepared.startTime, inSameDayAs: selectedDay) && {
+                switch category {
+                case .app:
+                    return prepared.appName == summaryName && prepared.windowTitle == detailName
+                case .domain:
+                    return prepared.resolvedDomain == summaryName && (prepared.resolvedDomain ?? prepared.appName) == detailName
+                case .pdf:
+                    return prepared.isPDF && prepared.windowTitle == summaryName && prepared.windowTitle == detailName
+                }
+            }()
+        }.map { $0.identity }
+
+        guard !logsToDelete.isEmpty else { return }
+
+        // 2. 从持久化上下文中逐个匹配并删除。
+        for identity in logsToDelete {
+            let start = identity.startTime
+            let duration = identity.duration
+            let appName = identity.appName
+            let windowTitle = identity.windowTitle
+            let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
+                log.startTime == start && log.duration == duration && log.appName == appName && log.windowTitle == windowTitle
+            })
+            if let logs = try? modelContext.fetch(descriptor), let log = logs.first {
+                modelContext.delete(log)
+            }
+        }
+
+        // 3. 执行物理保存。
+        try? modelContext.save()
+    }
+
     /// 前后翻页逻辑，基于当前时间跨度周期平移参考时间
     func shiftReferenceDate(by value: Int, range: StatisticsRange) {
         let component: Calendar.Component
@@ -846,11 +889,17 @@ final class StatisticsEngine {
 
     nonisolated private static func longestStreak(in daySummaries: [DaySummary], calendar: Calendar) -> Int {
         guard !daySummaries.isEmpty else { return 0 }
+        
+        // 1. 提取所有活跃日期并进行升序排序。
         let sortedDays = daySummaries.map(\.date).sorted()
         var longest = 1
         var current = 1
+        
+        // 2. 遍历日期数组，判断相邻日期是否连续（相差一天）。
         for index in 1..<sortedDays.count {
             guard let previous = calendar.date(byAdding: .day, value: 1, to: sortedDays[index - 1]) else { continue }
+            
+            // 3. 若连续则递增当前计数并更新最大连续天数；若中断则重置当前计数。
             if calendar.isDate(previous, inSameDayAs: sortedDays[index]) {
                 current += 1
                 longest = max(longest, current)
@@ -863,6 +912,8 @@ final class StatisticsEngine {
 
     nonisolated private static func strongestTimeSlot(in logs: [PreparedLog], calendar: Calendar) -> ReportTimeSlot? {
         guard !logs.isEmpty else { return nil }
+        
+        // 1. 将日志按开始时间分配到对应的时段桶（上午/下午/晚上/深夜）。
         var buckets: [ReportTimeSlot: TimeInterval] = [:]
         for log in logs {
             let hour = calendar.component(.hour, from: log.startTime)
@@ -875,6 +926,8 @@ final class StatisticsEngine {
             }
             buckets[slot, default: 0] += log.duration
         }
+        
+        // 2. 找出累计时长最高的时段并返回。
         return buckets.max(by: { $0.value < $1.value })?.key
     }
 

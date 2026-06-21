@@ -27,11 +27,12 @@ enum LegacyStoreMigrator {
 
         let descriptor = FetchDescriptor<ActivityLog>()
         let existingLogs = (try? context.fetch(descriptor)) ?? []
+
+        // 1. 先把新库已有记录转成唯一键集合，后续迁移时只补缺失项。
         var existingKeys = Set(existingLogs.map(makeKey))
         var insertedCount = 0
 
-        // 1. 先把新库已有记录转成唯一键集合，后续迁移时只补缺失项。
-        // 2. 旧库和新库可能并存一段时间，所以这里必须显式去重，避免重复写入。
+        // 2. 旧库和新库可能并存一段时间，这里遍历旧库记录，进行去重与补全，避免重复写入。
         for oldRow in oldRows {
             let key = makeKey(
                 appName: oldRow.appName,
@@ -60,10 +61,11 @@ enum LegacyStoreMigrator {
         }
 
         // 3. 只有真正补进新记录时才保存，避免每次启动都产生无意义写入。
-        // 4. 保存完成后把旧库签名写到标记文件，下次如果旧库没变化就直接跳过。
         if insertedCount > 0 {
             try? context.save()
         }
+        
+        // 4. 保存完成后把旧库签名写到标记文件，下次如果旧库没变化就直接跳过。
         try? signature.write(to: markerURL, atomically: true, encoding: .utf8)
     }
 

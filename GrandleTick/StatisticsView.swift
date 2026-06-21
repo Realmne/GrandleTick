@@ -379,40 +379,10 @@ struct StatisticsView: View {
     }
 
     private func deleteLogs(on selectedDay: Date?, category: DetailCategory, summaryName: String, detailName: String) {
-        guard let selectedDay else { return }
+        // 1. 调用业务引擎的 deleteLogs 方法，从持久化层擦除数据。
+        engine.deleteLogs(on: selectedDay, category: category, summaryName: summaryName, detailName: detailName, modelContext: modelContext)
 
-        // 1. 按照当前选中日期以及特定应用/域名定位需清理的日志标识。
-        let logsToDelete = engine.rangeLogs.filter { prepared in
-            calendar.isDate(prepared.startTime, inSameDayAs: selectedDay) && {
-                switch category {
-                case .app:
-                    return prepared.appName == summaryName && prepared.windowTitle == detailName
-                case .domain:
-                    return prepared.resolvedDomain == summaryName && (prepared.resolvedDomain ?? prepared.appName) == detailName
-                case .pdf:
-                    return prepared.isPDF && prepared.windowTitle == summaryName && prepared.windowTitle == detailName
-                }
-            }()
-        }.map { $0.identity }
-
-        guard !logsToDelete.isEmpty else { return }
-
-        // 2. 从持久化上下文（ModelContext）中逐个擦除匹配项并保存。
-        for identity in logsToDelete {
-            let start = identity.startTime
-            let duration = identity.duration
-            let appName = identity.appName
-            let windowTitle = identity.windowTitle
-            let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
-                log.startTime == start && log.duration == duration && log.appName == appName && log.windowTitle == windowTitle
-            })
-            if let logs = try? modelContext.fetch(descriptor), let log = logs.first {
-                modelContext.delete(log)
-            }
-        }
-
-        // 3. 执行物理保存并刷新引擎数据。
-        try? modelContext.save()
+        // 2. 执行保存完后刷新引擎数据。
         refreshRangeData()
     }
 
@@ -671,13 +641,18 @@ private struct RangeTrendSection: View {
 
     private func isHighlighted(_ date: Date) -> Bool { guard let highlightedDay else { return false }; return Calendar.current.isDate(date, inSameDayAs: highlightedDay) }
     private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
+        // 1. 提取图表的绘图区域，并将触摸点坐标转换为相对于绘图区的坐标。
         guard let plotFrame = proxy.plotFrame.map({ geometry[$0] }) else { return }
         let relativeX = location.x - plotFrame.origin.x
         guard relativeX >= 0, relativeX <= plotFrame.size.width else { return }
+        
+        // 2. 计算触摸位置在 X 轴上距离最近 of 每日柱状数据中心点的距离。
         let nearest = daySummaries.compactMap { daySummary -> (summary: DaySummary, distance: CGFloat)? in
             guard let centerDate = Calendar.current.date(byAdding: .hour, value: 12, to: daySummary.date), let positionX = proxy.position(forX: centerDate) else { return nil }
             return (daySummary, abs(positionX - relativeX))
         }.min { $0.distance < $1.distance }
+        
+        // 3. 找出距离最近的日期，若与当前选中日期不同，则更新高亮状态并延迟提交选择。
         if let nearest, !isHighlighted(nearest.summary.date) { highlightedDay = nearest.summary.date; scheduleCommit(for: nearest.summary.date) }
     }
     private func scheduleCommit(for date: Date) { commitTask?.cancel(); commitTask = Task { try? await Task.sleep(for: .milliseconds(80)); guard !Task.isCancelled else { return }; await MainActor.run { onSelectDay(date) } } }
@@ -768,7 +743,7 @@ private struct RankingSection: View {
     }
 }
 
-enum DetailCategory: Sendable { case app, domain, pdf }
+
 
 private struct SelectedDaySection: View {
     let selectedDay: Date?

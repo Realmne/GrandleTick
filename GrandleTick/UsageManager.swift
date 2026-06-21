@@ -24,9 +24,7 @@ final class UsageManager {
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
         tracker.activityDidChange = { [weak self] in
-            Task { @MainActor in
-                self?.handleActivityChange(at: Date())
-            }
+            self?.handleActivityChange(at: Date())
         }
         tracker.track(forceRefresh: true)
         startSessionIfNeeded(at: Date())
@@ -52,17 +50,17 @@ final class UsageManager {
     // 1. 处理计时器心跳。
     // 每秒执行一次，用于刷新展示时长和定期同步到数据库。
     private func handleTrackingTick(at now: Date) {
-        // (1) Timer 仍保留给秒级菜单栏显示，同时作为 AX/系统通知漏发时的兜底刷新。
+        // 1. Timer 仍保留给秒级菜单栏显示，同时作为 AX/系统通知漏发时的兜底刷新。
         tracker.track()
         reconcileTrackedActivity(at: now)
 
-        // (2) 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
+        // 2. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
         guard currentSession != nil else {
             publishMenuBarTitle()
             return
         }
 
-        // (3) 展示值由当前时刻减会话开始时刻派生出来，避免事件切换和 Timer tick 互相影响。
+        // 3. 展示值由当前时刻减会话开始时刻派生出来，避免事件切换和 Timer tick 互相影响。
         updateDisplayedDurations(at: now)
 
         if persistedLogNeedsCreation {
@@ -84,7 +82,7 @@ final class UsageManager {
     private func reconcileTrackedActivity(at now: Date) {
         let trackedActivity = TrackedActivity(from: tracker)
 
-        // (1) 统计身份变化时立即收尾旧会话，并用事件发生时刻启动新会话。
+        // 1. 统计身份变化时立即收尾旧会话，并用事件发生时刻启动新会话。
         if trackedActivity?.identity != currentSession?.identity {
             persistCurrentSession(forceSave: true, endDate: now)
             clearSessionState()
@@ -95,8 +93,7 @@ final class UsageManager {
 
         guard let trackedActivity, let currentSession else { return }
 
-        // (2) 普通网站可能在同一域名内切换页面，累计身份不变但 fullUrl 会更新；
-        // 这里保留最新 URL 供落库排查，同时不拆分累计口径。
+        // 2. 普通网站可能在同一域名内切换页面，累计身份不变但 fullUrl 会更新；这里保留最新 URL 供落库排查，同时不拆分累计口径。
         if trackedActivity.fullUrl != currentSession.fullUrl
             || trackedActivity.bilibiliTidV2 != currentSession.bilibiliTidV2 {
             self.currentSession = ActiveSession(
@@ -342,7 +339,7 @@ final class UsageManager {
         let lowercasedAppName = appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
         
-        // (1) 如果是浏览器，校验域名是否在白名单内，并对 B 站进行特殊指纹校验。
+        // 1. 如果是浏览器，校验域名是否在白名单内，并对 B 站进行特殊指纹校验。
         if isWebsite {
             guard let domain = domain else { return false }
             let isWhitelistedDomain = WhitelistManager.shared.whitelistedDomains.contains { $0.lowercased() == domain.lowercased() }
@@ -355,12 +352,12 @@ final class UsageManager {
             return isWhitelistedDomain
         } 
         
-        // (2) 如果是 PDF 查看器，校验是否正在查看 PDF 文件。
+        // 2. 如果是 PDF 查看器，校验是否正在查看 PDF 文件。
         if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
             return windowTitle.lowercased().contains(".pdf")
         } 
         
-        // (3) 其它本地应用匹配应用白名单。
+        // 3. 其它本地应用匹配应用白名单。
         return WhitelistManager.shared.whitelistedApps.contains { app in
             let lowercasedApp = app.lowercased()
             return lowercasedApp == lowercasedAppName || lowercasedApp.contains(lowercasedAppName) || lowercasedAppName.contains(lowercasedApp)
@@ -370,7 +367,7 @@ final class UsageManager {
     // 2. 用于评估数据库历史记录中的某条日志是否属于学习分类。
     // 在读取今天已落库的所有日志累加今日总时长时使用此方法。
     private func isStudyLog(_ log: ActivityLog, whitelist: WhitelistSnapshot) -> Bool {
-        // (1) 过滤掉无意义的系统权限提示或未知/无效空日志。
+        // 1. 过滤掉无意义的系统权限提示或未知/无效空日志。
         if log.windowTitle.contains("权限") || log.windowTitle.contains("未知") || log.appName.isEmpty {
             return false
         }
@@ -378,7 +375,7 @@ final class UsageManager {
         let lowercasedAppName = log.appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
         
-        // (2) 浏览器日志需要对白名单和 B 站专属标识进行校验。
+        // 2. 浏览器日志需要对白名单和 B 站专属标识进行校验。
         if isWebsite {
             let resolvedDomain: String?
             if let domain = log.domain, !domain.isEmpty {
@@ -399,10 +396,10 @@ final class UsageManager {
             
             return isWhitelistedDomain
         } else if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
-            // (3) PDF 校验。
+            // 3. PDF 校验。
             return log.windowTitle.lowercased().contains(".pdf")
         } else {
-            // (4) 应用白名单校验。
+            // 4. 应用白名单校验。
             return whitelist.lowercasedApps.contains { app in
                 app == lowercasedAppName || app.contains(lowercasedAppName) || lowercasedAppName.contains(app)
             }
@@ -413,23 +410,23 @@ final class UsageManager {
     private func loadTodayTotalDurations(now: Date) -> (study: TimeInterval, entertainment: TimeInterval) {
         guard let context = modelContext else { return (0, 0) }
         
-        // (1) 计算今日零点的时间戳，用作日志筛选的下限。
+        // 1. 计算今日零点的时间戳，用作日志筛选的下限。
         let startOfDay = Calendar.current.startOfDay(for: now)
         
-        // (2) 从数据库获取今天零点以后的所有活动日志。
+        // 2. 从数据库获取今天零点以后的所有活动日志。
         let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
             log.startTime >= startOfDay
         })
         
         let todayLogs = (try? context.fetch(descriptor)) ?? []
         
-        // (3) 构造白名单快照，确保对于大量日志分类时使用轻量的高速查找。
+        // 3. 构造白名单快照，确保对于大量日志分类时使用轻量的高速查找。
         let whitelistSnapshot = WhitelistSnapshot(whitelist: WhitelistManager.shared)
         
         var studyTotal: TimeInterval = 0
         var entertainmentTotal: TimeInterval = 0
         
-        // (4) 遍历今天所有的日志并进行分类时长累加。
+        // 4. 遍历今天所有的日志并进行分类时长累加。
         for log in todayLogs {
             if isStudyLog(log, whitelist: whitelistSnapshot) {
                 studyTotal += log.duration
