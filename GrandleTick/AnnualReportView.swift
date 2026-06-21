@@ -22,10 +22,7 @@ struct AnnualReportView: View {
     
     var body: some View {
         ZStack {
-            // 1. 极光动感炫彩背景。
-            AuroraBackground()
-            
-            // 2. 主卡片视图与导航控制。
+            // 1. 主卡片视图与导航控制。
             VStack(spacing: 20) {
                 if isLoading {
                     loadingView
@@ -36,22 +33,22 @@ struct AnnualReportView: View {
             .frame(width: 480, height: 640)
             .background(
                 ZStack {
-                    // 1. 采用微弱蔚蓝至靛紫的渐变半透明层，消除原本沉闷突兀的灰色 HUD 质感，使卡片背景与极光动感背景更好地融为一体。
-                    RoundedRectangle(cornerRadius: 24)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.10, green: 0.12, blue: 0.24).opacity(0.40),
-                                    Color(red: 0.05, green: 0.06, blue: 0.12).opacity(0.60)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    // 1. 暗夜靛紫蔚蓝固态深层渐变底色，确保色彩饱和度，100% 摆脱系统窗口发灰的毛玻璃底色问题。
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.05, green: 0.05, blue: 0.12),
+                            Color(red: 0.12, green: 0.08, blue: 0.22),
+                            Color(red: 0.03, green: 0.03, blue: 0.07)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .cornerRadius(24)
                     
-                    // 2. 结合更轻量透光的 underWindowBackground 材质，让底层极光的色彩能够自然穿透，消除沉闷感。
-                    VisualEffectView(material: .underWindowBackground, blendingMode: .withinWindow)
+                    // 2. 将极光动感炫彩背景内嵌入卡片内部，确保在任何宿主窗口下都能100%完美展示彩色光晕。
+                    AuroraBackground()
                         .cornerRadius(24)
+                        .opacity(0.85)
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 24)
