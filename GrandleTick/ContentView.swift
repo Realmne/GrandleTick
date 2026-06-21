@@ -184,7 +184,13 @@ struct ContentView: View {
                     title: "退出 GrandleTick",
                     systemImage: "power",
                     tint: .secondary,
-                    action: { NSApplication.shared.terminate(nil) }
+                    action: {
+                        // 1. 退出前强制持久化当前活动 Session，确保退出时的数据能够写入 SQLite 数据库。
+                        usageManager.flushPendingSession()
+                        
+                        // 2. 强行终止进程，防止任何打开的子窗口/Sheet（例如年度报告）拦截系统终止指令而导致退出受阻。
+                        exit(0)
+                    }
                 )
             }
             .padding(.horizontal, 12)

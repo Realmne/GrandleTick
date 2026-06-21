@@ -83,7 +83,20 @@ struct AnnualReportView: View {
         }
         .frame(width: 480, height: 640)
         .onAppear {
+            // 1. 加载本年度学习与娱乐的相关统计数据。
             loadYearlyData()
+            
+            // 2. 异步获取承载当前年度报告视图的 NSWindow，并将其底色设为透明并刷新阴影，从而消除默认 Sheet 容器在圆角外侧留下的灰色/白色底色框架。
+            DispatchQueue.main.async {
+                if let window = NSApplication.shared.windows.first(where: { w in
+                    w.isVisible && (abs(w.frame.width - 480) < 5) && (abs(w.frame.height - 640) < 5)
+                }) {
+                    window.backgroundColor = .clear
+                    window.isOpaque = false
+                    window.hasShadow = true
+                    window.invalidateShadow()
+                }
+            }
         }
     }
     
