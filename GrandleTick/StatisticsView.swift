@@ -158,6 +158,7 @@ struct StatisticsView: View {
         .sheet(isPresented: $showAnnualReport) {
             AnnualReportView()
                 .modelContext(modelContext)
+                .presentationBackground(.clear)
         }
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
             refreshRangeData()
