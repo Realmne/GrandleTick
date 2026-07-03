@@ -122,7 +122,7 @@ struct AnnualReportView: View {
     }
     
     private var mainCardDeck: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
             // 1. 内容切换卡片区，带过渡动画。
             ZStack {
                 Group {
@@ -189,46 +189,52 @@ struct AnnualReportView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 2. 预留固定底部导航区，避免内容文本较少的页面把翻页按钮“吸”到更高位置。
+            .padding(.bottom, 76)
             .clipped()
             
-            // 2. 底部翻页控制器与导航按钮。
-            HStack {
-                Button(action: { switchPage(to: currentPage - 1) }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(currentPage > 0 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
-                        .padding(10)
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .disabled(currentPage == 0)
-                
-                Spacer()
-                
-                // 3. 点状页面指示器。
-                HStack(spacing: 8) {
-                    ForEach(0..<totalPages, id: \.self) { index in
-                        Circle()
-                            .fill(index == currentPage ? AnnualReportView.studyColor : AnnualReportView.borderColor)
-                            .frame(width: index == currentPage ? 8 : 6, height: index == currentPage ? 8 : 6)
-                            .animation(.spring(response: 0.3), value: currentPage)
-                    }
-                }
-                
-                Spacer()
-                
-                Button(action: { switchPage(to: currentPage + 1) }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(currentPage < totalPages - 1 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
-                        .padding(10)
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .disabled(currentPage == totalPages - 1)
+            bottomNavigation
+                .padding(.horizontal, 32)
+                .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var bottomNavigation: some View {
+        HStack {
+            Button(action: { switchPage(to: currentPage - 1) }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(currentPage > 0 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
+                    .padding(10)
             }
-            .padding(.horizontal, 32)
-            .padding(.bottom, 24)
+            .buttonStyle(.plain)
+            .focusable(false)
+            .disabled(currentPage == 0)
+            
+            Spacer()
+            
+            // 1. 分页点与左右箭头固定在报告底部 overlay 层，页面内容高度变化时不会重新排布。
+            HStack(spacing: 8) {
+                ForEach(0..<totalPages, id: \.self) { index in
+                    Circle()
+                        .fill(index == currentPage ? AnnualReportView.studyColor : AnnualReportView.borderColor)
+                        .frame(width: index == currentPage ? 8 : 6, height: index == currentPage ? 8 : 6)
+                        .animation(.spring(response: 0.3), value: currentPage)
+                }
+            }
+            
+            Spacer()
+            
+            Button(action: { switchPage(to: currentPage + 1) }) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(currentPage < totalPages - 1 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
+                    .padding(10)
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .disabled(currentPage == totalPages - 1)
         }
     }
     
