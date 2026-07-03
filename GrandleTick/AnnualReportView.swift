@@ -202,15 +202,11 @@ struct AnnualReportView: View {
     
     private var bottomNavigation: some View {
         HStack {
-            Button(action: { switchPage(to: currentPage - 1) }) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(currentPage > 0 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
-                    .padding(10)
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .disabled(currentPage == 0)
+            AnnualReportNavButton(
+                systemImage: "chevron.left",
+                isDisabled: currentPage == 0,
+                action: { switchPage(to: currentPage - 1) }
+            )
             
             Spacer()
             
@@ -226,15 +222,11 @@ struct AnnualReportView: View {
             
             Spacer()
             
-            Button(action: { switchPage(to: currentPage + 1) }) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(currentPage < totalPages - 1 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
-                    .padding(10)
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .disabled(currentPage == totalPages - 1)
+            AnnualReportNavButton(
+                systemImage: "chevron.right",
+                isDisabled: currentPage == totalPages - 1,
+                action: { switchPage(to: currentPage + 1) }
+            )
         }
     }
     
@@ -1121,6 +1113,36 @@ private func titleSection(title: String, subtitle: String) -> some View {
 }
 
 // MARK: - Supporting Views
+
+private struct AnnualReportNavButton: View {
+    let systemImage: String
+    let isDisabled: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                // 1. 固定 38pt 圆形热区，让用户能明确看到箭头按钮的可点击范围。
+                Circle()
+                    .fill(isDisabled ? AnnualReportView.softFill.opacity(0.45) : AnnualReportView.cardFill)
+                    .overlay(
+                        Circle()
+                            .stroke(isDisabled ? AnnualReportView.borderColor.opacity(0.45) : AnnualReportView.borderColor, lineWidth: 1)
+                    )
+                    .shadow(color: isDisabled ? .clear : Color.black.opacity(0.08), radius: 6, x: 0, y: 3)
+                
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(isDisabled ? AnnualReportView.tertiaryText.opacity(0.38) : AnnualReportView.primaryText)
+            }
+            .frame(width: 38, height: 38)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .disabled(isDisabled)
+    }
+}
 
 // Frosted Glass Effect View
 struct VisualEffectView: NSViewRepresentable {
