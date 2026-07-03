@@ -115,7 +115,7 @@ struct AnnualReportView: View {
                 .progressViewStyle(.circular)
                 .controlSize(.large)
             
-            Text("正在编排您的年度时光印记...")
+            Text("正在生成年度学习报告...")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(AnnualReportView.secondaryText)
         }
@@ -315,7 +315,7 @@ private struct CoverCard: View {
                     .foregroundColor(AnnualReportView.primaryText)
                     .tracking(4)
                 
-                Text("时间的回响")
+                Text("年度学习报告")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundColor(AnnualReportView.primaryText)
                 
@@ -328,7 +328,7 @@ private struct CoverCard: View {
             
             Spacer()
             
-            Text("轻触右下角箭头，开启您的专注旅程")
+            Text("点击右下角箭头查看下一页")
                 .font(.system(size: 11))
                 .foregroundColor(AnnualReportView.tertiaryText)
                 .padding(.bottom, 40)
@@ -349,13 +349,13 @@ private struct AnnualOverviewCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            titleSection(title: "年度总览", subtitle: "把这一年的核心专注指标先铺开")
+            titleSection(title: "年度总览", subtitle: "先看这一年的主要学习数据")
             
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 metricTile(title: "学习总时长", value: formatDetailedDuration(studyDuration), icon: "clock.fill", tint: AnnualReportView.studyColor)
                 metricTile(title: "活跃天数", value: "\(activeDays) 天", icon: "calendar.badge.checkmark", tint: .green)
                 metricTile(title: "日均学习", value: formatDetailedDuration(averageDailyDuration), icon: "chart.bar.fill", tint: .orange)
-                metricTile(title: "首位应用", value: topAppSummary?.displayName ?? "暂无数据", icon: "app.badge.fill", tint: .purple)
+                metricTile(title: "使用最多的应用", value: topAppSummary?.displayName ?? "暂无数据", icon: "app.badge.fill", tint: .purple)
             }
             .opacity(appear ? 1.0 : 0.0)
             .offset(y: appear ? 0 : 16)
@@ -418,7 +418,7 @@ private struct AnnualOverviewCard: View {
                 Text("\(isGrowing ? "增加" : "减少") \(formatDetailedDuration(abs(comparison.totalDurationDelta)))")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(AnnualReportView.primaryText)
-                Text("活跃天数变化 \(comparison.activeDaysDelta >= 0 ? "+" : "")\(comparison.activeDaysDelta) 天 · 变化率 \(rateText)")
+                Text("学习天数变化 \(comparison.activeDaysDelta >= 0 ? "+" : "")\(comparison.activeDaysDelta) 天 · 变化率 \(rateText)")
                     .font(.system(size: 11))
                     .foregroundColor(AnnualReportView.tertiaryText)
             }
@@ -450,12 +450,12 @@ private struct FocusRatioCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            titleSection(title: "专注与休闲的张力", subtitle: "时间在不同场景下的分布比例")
+            titleSection(title: "学习与休闲占比", subtitle: "统计本年度学习时间和休闲时间")
             
             VStack(spacing: 24) {
                 // 学习时长大字
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("专注学习时长")
+                    Text("学习时间")
                         .font(.caption)
                         .foregroundColor(AnnualReportView.studyColor)
                     Text(formatDetailedDuration(studyDuration))
@@ -468,7 +468,7 @@ private struct FocusRatioCard: View {
                 
                 // 娱乐时长大字
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("娱乐休闲时长")
+                    Text("休闲时间")
                         .font(.caption)
                         .foregroundColor(AnnualReportView.entertainmentColor)
                     Text(formatDetailedDuration(entertainmentDuration))
@@ -527,7 +527,7 @@ private struct RhythmCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 26) {
-            titleSection(title: "探寻高效的旋律", subtitle: "捕捉你日常专注的黄金时段与节奏")
+            titleSection(title: "学习节奏", subtitle: "查看你常用的学习时段")
             
             VStack(spacing: 20) {
                 // 黄金时段
@@ -538,7 +538,7 @@ private struct RhythmCard: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("黄金专注时段")
+                        Text("主要学习时段")
                             .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                         Text(primarySlot?.title ?? "全天平衡")
                             .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
@@ -548,7 +548,7 @@ private struct RhythmCard: View {
                 .opacity(appear ? 1.0 : 0.0)
                 .offset(y: appear ? 0 : 15)
                 
-                // 最早专注
+                // 最早学习
                 if let earliest {
                     HStack(spacing: 16) {
                         ZStack {
@@ -557,11 +557,11 @@ private struct RhythmCard: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("最早的破晓专注")
+                            Text("最早开始学习")
                                 .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatClock(earliest))
                                 .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
-                            Text("晨曦微露时，你已踏上专注的旅途")
+                            Text("这一天你很早就进入了学习状态")
                                 .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
@@ -570,7 +570,7 @@ private struct RhythmCard: View {
                     .offset(y: appear ? 0 : 15)
                 }
                 
-                // 最晚专注
+                // 最晚学习
                 if let latest {
                     HStack(spacing: 16) {
                         ZStack {
@@ -579,11 +579,11 @@ private struct RhythmCard: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("最晚的守夜专注")
+                            Text("最晚结束学习")
                                .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatClock(latest))
                                 .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
-                            Text("夜阑人静，微弱窗口光芒伴你前行")
+                            Text("这次学习持续到了较晚时间")
                                 .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
@@ -606,7 +606,7 @@ private struct RhythmCard: View {
         let maxValue = max(hourlyDurations.max() ?? 0, 1)
         
         return VStack(alignment: .leading, spacing: 10) {
-            Text("24 小时专注热力")
+            Text("24 小时学习分布")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundColor(AnnualReportView.primaryText)
             
@@ -671,7 +671,7 @@ private struct ContentMixCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 26) {
-            titleSection(title: "内容结构", subtitle: "从载体和应用两个角度观察年度活动来源")
+            titleSection(title: "学习来源", subtitle: "按网页、PDF 和应用查看年度使用情况")
             
             VStack(spacing: 14) {
                 mixBar(
@@ -693,7 +693,7 @@ private struct ContentMixCard: View {
             .offset(y: appear ? 0 : 15)
             
             VStack(alignment: .leading, spacing: 12) {
-                Text("年度应用 Top 3")
+                Text("年度常用应用")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(AnnualReportView.primaryText)
                 
@@ -745,7 +745,7 @@ private struct ContentMixCard: View {
             }
             .frame(height: 10)
             
-            Text(String(format: "占内容载体 %.0f%%", value / total * 100))
+            Text(String(format: "占网页/PDF 总时长 %.0f%%", value / total * 100))
                 .font(.system(size: 10))
                 .foregroundColor(AnnualReportView.tertiaryText)
         }
@@ -806,25 +806,25 @@ private struct CompanionCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            titleSection(title: "与你同行的载体", subtitle: "这一年陪伴你最多的书页与网页")
+            titleSection(title: "常用资料", subtitle: "本年度使用最多的 PDF 和学习网站")
             
             VStack(alignment: .leading, spacing: 20) {
-                // 最爱阅读的书册 (PDF)
+                // 最常阅读的 PDF
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("年度书册 (PDF)", systemImage: "doc.richtext.fill")
+                    Label("年度 PDF", systemImage: "doc.richtext.fill")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(AnnualReportView.studyColor)
                     
                     if let topPDF = topPDFs.first {
                         companionRow(name: topPDF.name, duration: topPDF.totalTime)
                     } else {
-                        noDataRow(text: "今年还没有阅读 PDF 记录")
+                        noDataRow(text: "今年还没有 PDF 阅读记录")
                     }
                 }
                 .opacity(appear ? 1.0 : 0.0)
                 .offset(y: appear ? 0 : 15)
                 
-                // 最爱驻足的网站 (Web)
+                // 最常访问的学习网站
                 VStack(alignment: .leading, spacing: 10) {
                     Label("年度学习网站", systemImage: "globe")
                         .font(.system(size: 13, weight: .bold))
@@ -833,7 +833,7 @@ private struct CompanionCard: View {
                     if let topWeb = topWebsites.first {
                         companionRow(name: topWeb.name, duration: topWeb.totalTime)
                     } else {
-                        noDataRow(text: "今年还没有白名单域名学习记录")
+                        noDataRow(text: "今年还没有学习网站记录")
                     }
                 }
                 .opacity(appear ? 1.0 : 0.0)
@@ -894,7 +894,7 @@ private struct StreakCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            titleSection(title: "刻入时光的坚守", subtitle: "每一次启动都凝聚着恒心与自律")
+            titleSection(title: "学习连续性", subtitle: "查看学习天数和单日表现")
             
             VStack(spacing: 24) {
                 // 最长坚持
@@ -905,7 +905,7 @@ private struct StreakCard: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("最长连续坚持")
+                        Text("最长连续学习")
                             .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                         Text("\(longestStreak) 天")
                             .font(.system(size: 24, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
@@ -915,7 +915,7 @@ private struct StreakCard: View {
                 .opacity(appear ? 1.0 : 0.0)
                 .offset(y: appear ? 0 : 15)
                 
-                // 累计活跃天数
+                // 累计学习天数
                 HStack(spacing: 16) {
                     ZStack {
                         Circle().fill(Color.green.opacity(0.12)).frame(width: 48, height: 48)
@@ -923,7 +923,7 @@ private struct StreakCard: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("累计活跃天数")
+                        Text("累计学习天数")
                             .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                         Text("\(activeDays) 天")
                             .font(.system(size: 24, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
@@ -933,7 +933,7 @@ private struct StreakCard: View {
                 .opacity(appear ? 1.0 : 0.0)
                 .offset(y: appear ? 0 : 15)
                 
-                // 单日最高专注
+                // 单日最高学习
                 if let strongestDay {
                     HStack(spacing: 16) {
                         ZStack {
@@ -942,11 +942,11 @@ private struct StreakCard: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("单日最强爆发")
+                            Text("单日最高学习")
                                 .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatCompactDuration(strongestDay.totalTime))
                                 .font(.system(size: 24, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
-                            Text("在 \(formatDate(strongestDay.date))，你与高强度的心流融为一体")
+                            Text("在 \(formatDate(strongestDay.date)) 这天，学习时长达到年度最高")
                                 .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
@@ -963,11 +963,11 @@ private struct StreakCard: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("最低学习日")
+                            Text("单日最低学习")
                                 .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatCompactDuration(shortestActiveDay.totalTime))
                                 .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
-                            Text("\(formatDate(shortestActiveDay.date)) 留下了可继续补强的空间")
+                            Text("\(formatDate(shortestActiveDay.date)) 是学习时间较少的一天")
                                 .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
@@ -1006,25 +1006,25 @@ private struct ArchetypeCard: View {
     
     private var archetypeTitle: String {
         if pdfDuration > websiteDuration {
-            return "学海探索家"
+            return "系统阅读型"
         } else if longestStreak >= 7 {
-            return "深度修行者"
+            return "持续投入型"
         } else if primarySlot == .lateNight {
-            return "极光守夜人"
+            return "夜间学习型"
         } else {
-            return "平衡雕刻师"
+            return "均衡学习型"
         }
     }
     
     private var archetypeDesc: String {
         if pdfDuration > websiteDuration {
-            return "您偏爱静心啃读 PDF 书册与笔记，通过阅读汲取体系化的知识。默默沉淀是您的专属姿态。"
+            return "你更常通过 PDF 和笔记进行学习，适合处理结构完整、需要持续阅读的内容。"
         } else if longestStreak >= 7 {
-            return "您的自律如同潮汐规律前行。一旦立下目标，连续的坚守就是您的力量底色。"
+            return "你保持了较稳定的学习节奏，连续学习记录说明目标执行得比较扎实。"
         } else if primarySlot == .lateNight {
-            return "万籁俱寂时您的灵感火花最是灿烂。您习惯在寂静星空里点燃专注之火。"
+            return "你的学习时间更偏向夜间，适合在干扰较少的时段完成需要专注的任务。"
         } else {
-            return "游刃于网页资料与本地方案之间，在不同的学习任务中保持高效与平衡。"
+            return "你在网页资料、本地文档和应用之间分配较均衡，适合多来源的信息整理。"
         }
     }
     
@@ -1054,7 +1054,7 @@ private struct ArchetypeCard: View {
             
             // 人格标题
             VStack(spacing: 8) {
-                Text("您的年度时间人格")
+                Text("年度学习类型")
                     .font(.caption)
                     .foregroundColor(AnnualReportView.secondaryText)
                 
@@ -1081,7 +1081,7 @@ private struct ArchetypeCard: View {
             Button(action: actionReset) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.counterclockwise")
-                    Text("重读报告")
+                    Text("重新查看")
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(AnnualReportView.studyColor)

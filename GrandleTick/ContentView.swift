@@ -55,25 +55,25 @@ struct ContentView: View {
     }
     
     private var currentTitle: String {
-        isUntracked ? "未追踪的窗口" : usageManager.tracker.currentWindowTitle
+        isUntracked ? "未统计的窗口" : usageManager.tracker.currentWindowTitle
     }
     
     private var currentSourceName: String {
-        isUntracked ? "其他应用 (非白名单)" : usageManager.tracker.currentAppName
+        isUntracked ? "其他应用（不在白名单）" : usageManager.tracker.currentAppName
     }
     
     private var durationHeadline: String {
         if isUntracked {
             return "未在统计范围内"
         }
-        return isStudyActive ? "今日学习总时长" : "今日娱乐总时长"
+        return isStudyActive ? "今日学习总时长" : "今日休闲总时长"
     }
     
     private var durationSubtitle: String {
         if isUntracked {
             return "切换到白名单内的应用或网站后会继续累计"
         }
-        return isStudyActive ? "今日专注学习累计" : "今日娱乐休闲累计"
+        return isStudyActive ? "今日学习累计" : "今日休闲累计"
     }
     
     var body: some View {
@@ -85,7 +85,7 @@ struct ContentView: View {
                 }) {
                     HStack {
                         Image(systemName: "exclamationmark.shield.fill")
-                        Text("点击去开启辅助功能权限")
+                        Text("前往开启辅助功能权限")
                             .font(.caption).bold()
                     }
                     .padding(8)
@@ -99,7 +99,7 @@ struct ContentView: View {
             
             VStack(alignment: .center, spacing: 12) {
                 StatusPill(
-                    text: isUntracked ? "已暂停统计" : (isStudyActive ? "学习中 / 专注" : "娱乐 / 休闲"),
+                    text: isUntracked ? "已暂停统计" : (isStudyActive ? "学习中" : "休闲中"),
                     tint: isUntracked ? .gray : (isStudyActive ? .blue : .purple),
                     systemImage: isUntracked ? "pause.fill" : (isStudyActive ? "book.fill" : "gamecontroller.fill")
                 )
@@ -158,14 +158,14 @@ struct ContentView: View {
             
             VStack(spacing: 10) {
                 ActionCapsuleButton(
-                    title: "自定义白名单管理",
+                    title: "管理白名单",
                     systemImage: "checklist",
                     tint: .blue,
                     action: openWhitelistWindow
                 )
 
                 ActionCapsuleButton(
-                    title: "查看数据统计中心",
+                    title: "查看统计数据",
                     systemImage: "chart.pie.fill",
                     tint: .blue,
                     action: openStatisticsWindow

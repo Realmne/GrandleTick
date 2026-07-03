@@ -40,7 +40,7 @@ struct StatisticsView: View {
                             // 3. 统计核心卡片组，提供总时长、活跃天数等核心指标。
                             overviewCardsGrid
 
-                            // 4. 双环形占比图，并排展示 [专注 vs 娱乐] 和 [内容载体分布]。
+                            // 4. 双环形占比图，并排展示学习/休闲占比和学习来源分布。
                             HStack(spacing: 16) {
                                 LearningVsEntertainmentDonutCard(
                                     studyDuration: engine.studyDuration,
@@ -74,29 +74,29 @@ struct StatisticsView: View {
                                 formatClock: formatClock
                             )
 
-                            // 7. App 专注度分布，提供 App 占比环形图及热门前三排行。
+                            // 7. App 学习时长分布，提供 App 占比环形图及前三排行。
                             AppFocusDonutCard(
                                 topApps: engine.rankingEntries,
                                 totalDuration: engine.rangeTotalDuration,
                                 formatDuration: formatCompactDuration
                             )
 
-                            // 8. 热门网站与热门 PDF 分布（并排列表排行）。
+                            // 8. 常用网站与常用 PDF 分布（并排列表排行）。
                             HStack(spacing: 16) {
                                 ReportRankingPanel(
-                                    title: "热门网站 (前三)",
+                                    title: "常用网站（前三）",
                                     items: engine.topWebsites,
                                     formatDuration: formatCompactDuration
                                 )
 
                                 ReportRankingPanel(
-                                    title: "热门 PDF (前三)",
+                                    title: "常用 PDF（前三）",
                                     items: engine.topPDFs,
                                     formatDuration: formatCompactDuration
                                 )
                             }
 
-                            // 9. 自定义筛选器区域，用户可自行搜索、过滤载体和指定域名。
+                            // 9. 自定义筛选器区域，用户可自行搜索、过滤内容类型和指定域名。
                             FilterSection(
                                 searchText: $searchText,
                                 selectedContentFilter: $selectedContentFilter,
@@ -152,9 +152,9 @@ struct StatisticsView: View {
                 }
             }
             
-            // 12. 年度时光印记报告 - 采用应用内悬浮卡片机制，100% 避免系统级 Sheet 窗口自带的白色直角边框与阻碍退出问题。
+            // 12. 年度学习报告采用应用内悬浮卡片机制，避免系统级 Sheet 窗口自带的白色直角边框与阻碍退出问题。
             if showAnnualReport {
-                // 黑色半透明背景遮罩，阻断下层点击，提供电影级遮罩效果
+                // 黑色半透明背景遮罩阻断下层点击，确保年度报告弹层交互独立。
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .transition(.opacity)
@@ -256,14 +256,14 @@ struct StatisticsView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    Text("所有专注和活动统计回顾")
+                    Text("查看学习与活动统计")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
 
-                // 上一期/下一期翻页控制（仅在本周、本月、本年模式下显式启用）
+                // 上一期/下一期翻页控制（仅在本周、本月、今年模式下显式启用）
                 if selectedRange != .all {
                     HStack(spacing: 12) {
                         ReportPagerButton(
@@ -284,7 +284,7 @@ struct StatisticsView: View {
                         )
                     }
                 } else {
-                    Text("历史全部数据")
+                    Text("全部历史数据")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -325,7 +325,7 @@ struct StatisticsView: View {
             OverviewCard(
                 title: "活跃天数",
                 value: "\(engine.activeDays) 天",
-                subtitle: "累计活跃天数",
+                subtitle: "有记录的天数",
                 tint: .green
             )
 
@@ -339,12 +339,12 @@ struct StatisticsView: View {
             OverviewCard(
                 title: "最长连续天数",
                 value: "\(engine.longestStreak) 天",
-                subtitle: "连续专注记录",
+                subtitle: "连续学习记录",
                 tint: .purple
             )
 
             OverviewCard(
-                title: "同比变化",
+                title: "与上期对比",
                 value: formatComparisonValue(engine.comparison),
                 subtitle: formatComparisonSubtitle(engine.comparison, range: selectedRange),
                 tint: .pink
@@ -358,9 +358,9 @@ struct StatisticsView: View {
             Image(systemName: "chart.bar.xaxis")
                 .font(.system(size: 42))
                 .foregroundColor(.secondary.opacity(0.35))
-            Text("当前范围无记录")
+            Text("当前时间范围没有记录")
                 .font(.headline)
-            Text("请先在白名单应用或网站中使用。")
+            Text("使用白名单中的应用或网站后，这里会显示统计数据。")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -480,7 +480,7 @@ struct StatisticsView: View {
     private func formatDateRange(for range: StatisticsRange, referenceDate: Date) -> String {
         let now = Date()
         guard let interval = engine.interval(for: range, referenceDate: referenceDate, currentDate: now) else {
-            return "全部历史"
+            return "全部历史数据"
         }
         let endDate = interval.end.addingTimeInterval(-1)
 
@@ -499,7 +499,7 @@ struct StatisticsView: View {
     }
 
     private func formatComparisonValue(_ comparison: ReportComparison?) -> String {
-        guard let comparison else { return "第一期" }
+        guard let comparison else { return "暂无上期" }
         if let rate = comparison.totalDurationChangeRate {
             let pct = Int((rate * 100).rounded())
             if pct > 0 {
@@ -510,11 +510,11 @@ struct StatisticsView: View {
                 return "持平"
             }
         }
-        return "第一期"
+        return "暂无上期"
     }
 
     private func formatComparisonSubtitle(_ comparison: ReportComparison?, range: StatisticsRange) -> String {
-        guard let comparison else { return "期待后续统计" }
+        guard let comparison else { return "暂无可对比的数据" }
         let delta = comparison.totalDurationDelta
         let direction = delta > 0 ? "多" : "少"
         if delta == 0 {
@@ -568,7 +568,7 @@ private struct FilterSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("高级数据筛选")
+                Text("筛选条件")
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
                 if hasActiveFilters {
@@ -666,7 +666,7 @@ private struct RangeTrendSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("每日专注趋势").font(.headline)
+            Text("每日学习趋势").font(.headline)
             Chart(daySummaries) { daySummary in
                 BarMark(x: .value("日期", daySummary.date, unit: .day), y: .value("时长", daySummary.totalTime / 3600))
                 .foregroundStyle(barGradient(for: daySummary.date, colorScheme: colorScheme))
@@ -685,7 +685,7 @@ private struct RangeTrendSection: View {
 
             if let strongestDay = daySummaries.max(by: { $0.totalTime < $1.totalTime }) {
                 HStack {
-                    Text("最高单日专注").font(.caption).foregroundColor(.secondary)
+                    Text("单日最高学习").font(.caption).foregroundColor(.secondary)
                     Spacer()
                     Text(strongestDay.date.formatted(.dateTime.month(.defaultDigits).day())).font(.caption).foregroundColor(.secondary)
                     Text(formatDuration(strongestDay.totalTime)).font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -705,7 +705,7 @@ private struct RangeTrendSection: View {
         let relativeX = location.x - plotFrame.origin.x
         guard relativeX >= 0, relativeX <= plotFrame.size.width else { return }
         
-        // 2. 计算触摸位置在 X 轴上距离最近 of 每日柱状数据中心点的距离。
+        // 2. 计算触摸位置在 X 轴上距离最近的每日柱状数据中心点。
         let nearest = daySummaries.compactMap { daySummary -> (summary: DaySummary, distance: CGFloat)? in
             guard let centerDate = Calendar.current.date(byAdding: .hour, value: 12, to: daySummary.date), let positionX = proxy.position(forX: centerDate) else { return nil }
             return (daySummary, abs(positionX - relativeX))
@@ -721,7 +721,7 @@ private struct RangeTrendSection: View {
         return "\(comps.month ?? 0)/\(comps.day ?? 0)"
     }
     
-    // 2. 为趋势图设计带平滑渐变的柱状样式，增强光泽感和交互高亮对比。
+    // 2. 为趋势图设计带平滑渐变的柱状样式，增强交互高亮时的对比度。
     private func barGradient(for date: Date, colorScheme: ColorScheme) -> LinearGradient {
         if isHighlighted(date) {
             return LinearGradient(
@@ -748,7 +748,7 @@ private struct DayPickerSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("日期快速跳转").font(.system(size: 14, weight: .semibold)).foregroundColor(.secondary)
+            Text("按日期查看").font(.system(size: 14, weight: .semibold)).foregroundColor(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(daySummaries.sorted { $0.date > $1.date }) { daySummary in
@@ -776,7 +776,7 @@ private struct RankingSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("专注总排行榜").font(.headline)
+            Text("学习时长排行").font(.headline)
             Picker("排行维度", selection: $selectedDimension) {
                 Text("应用").tag(RankingDimension.app)
                 Text("域名").tag(RankingDimension.domain)
@@ -840,13 +840,13 @@ private struct SelectedDaySection: View {
             }
 
             if appSummaries.isEmpty && domainSummaries.isEmpty && pdfSummaries.isEmpty {
-                Text("该日无专注记录").font(.caption).foregroundColor(.secondary)
+                Text("当天没有学习记录").font(.caption).foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 16)
             } else {
                 VStack(spacing: 12) {
-                    CategorySummaryGroup(title: "应用维度", emptyText: "无应用记录", summaries: appSummaries, formatDuration: formatDuration, onDelete: { onDelete(.app, $0, $1) })
-                    CategorySummaryGroup(title: "域名维度", emptyText: "无域名记录", summaries: domainSummaries, formatDuration: formatDuration, onDelete: { onDelete(.domain, $0, $1) })
-                    CategorySummaryGroup(title: "PDF 维度", emptyText: "无 PDF 记录", summaries: pdfSummaries, formatDuration: formatDuration, onDelete: { onDelete(.pdf, $0, $1) })
+                    CategorySummaryGroup(title: "按应用", emptyText: "无应用记录", summaries: appSummaries, formatDuration: formatDuration, onDelete: { onDelete(.app, $0, $1) })
+                    CategorySummaryGroup(title: "按域名", emptyText: "无域名记录", summaries: domainSummaries, formatDuration: formatDuration, onDelete: { onDelete(.domain, $0, $1) })
+                    CategorySummaryGroup(title: "按 PDF", emptyText: "无 PDF 记录", summaries: pdfSummaries, formatDuration: formatDuration, onDelete: { onDelete(.pdf, $0, $1) })
                 }
             }
         }
@@ -941,7 +941,7 @@ private struct LearningVsEntertainmentDonutCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("专注与娱乐分布")
+            Text("学习与休闲分布")
                 .font(.system(size: 14, weight: .semibold))
 
             HStack(spacing: 16) {
@@ -981,8 +981,8 @@ private struct LearningVsEntertainmentDonutCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    ReportLegendStat(title: "学习专注", value: formatDuration(studyDuration), tint: Color(red: 0.2, green: 0.6, blue: 1.0))
-                    ReportLegendStat(title: "娱乐消遣", value: formatDuration(entertainmentDuration), tint: Color(red: 1.0, green: 0.45, blue: 0.25))
+                    ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: Color(red: 0.2, green: 0.6, blue: 1.0))
+                    ReportLegendStat(title: "休闲时间", value: formatDuration(entertainmentDuration), tint: Color(red: 1.0, green: 0.45, blue: 0.25))
                 }
 
                 Spacer()
@@ -1019,13 +1019,13 @@ private struct ContentCategoryDonutCard: View {
         return [
             Category(name: "PDF 文档", duration: pdfDuration, color: Color(red: 0.68, green: 0.45, blue: 0.95)),
             Category(name: "网页浏览", duration: websiteDuration, color: Color(red: 0.12, green: 0.72, blue: 0.72)),
-            Category(name: "原生应用", duration: appDuration, color: Color(red: 0.22, green: 0.58, blue: 0.95))
+            Category(name: "应用", duration: appDuration, color: Color(red: 0.22, green: 0.58, blue: 0.95))
         ].filter { $0.duration > 0 }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("学习载体分布")
+            Text("学习来源分布")
                 .font(.system(size: 14, weight: .semibold))
 
             HStack(spacing: 16) {
@@ -1085,7 +1085,7 @@ private struct RhythmSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("专注节奏分布")
+            Text("学习时段分布")
                 .font(.headline)
 
             HStack(alignment: .top, spacing: 16) {
@@ -1094,13 +1094,13 @@ private struct RhythmSection: View {
                     ReportRhythmHourlyChart(hourlyDurations: hourlyDurations)
 
                     if let primaryTimeSlot {
-                        Text("您更常在")
+                        Text("你更常在")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary) +
                         Text(" \(primaryTimeSlot.title) ")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.purple) +
-                        Text("时段进入高效状态。")
+                        Text("时段进入学习状态。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
@@ -1112,13 +1112,13 @@ private struct RhythmSection: View {
                     ClockCard(
                         title: "最早开始",
                         time: earliestStudyStart.map(formatClock) ?? "--:--",
-                        subtitle: "开启高效时刻"
+                        subtitle: "最早开始学习"
                     )
 
                     ClockCard(
                         title: "最晚结束",
                         time: latestStudyEnd.map(formatClock) ?? "--:--",
-                        subtitle: "结束一天专注"
+                        subtitle: "最晚结束学习"
                     )
                 }
                 .frame(width: 160)
@@ -1256,7 +1256,7 @@ private struct AppFocusDonutCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("应用专注占比分布")
+            Text("应用学习时长占比")
                 .font(.headline)
 
             HStack(spacing: 20) {

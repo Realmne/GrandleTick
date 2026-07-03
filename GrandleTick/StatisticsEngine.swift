@@ -222,7 +222,7 @@ enum StatisticsRange: String, CaseIterable, Identifiable, Sendable {
         case .today: return "今天"
         case .week: return "本周"
         case .month: return "本月"
-        case .year: return "本年"
+        case .year: return "今年"
         case .all: return "全部"
         }
     }
@@ -230,10 +230,10 @@ enum StatisticsRange: String, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .today: return "今天"
-        case .week: return "本周回顾"
-        case .month: return "本月回顾"
-        case .year: return "本年回顾"
-        case .all: return "全部历史"
+        case .week: return "本周统计"
+        case .month: return "本月统计"
+        case .year: return "今年统计"
+        case .all: return "全部记录"
         }
     }
 
@@ -264,7 +264,7 @@ struct FilterComputationResult: Sendable {
     let selectedDayDomainSummaries: [GroupedSummary]
     let selectedDayPdfSummaries: [GroupedSummary]
 
-    // 热门排行
+    // 常用项目排行
     let topWebsites: [RankingEntry]
     let topPDFs: [RankingEntry]
 
@@ -314,11 +314,11 @@ final class StatisticsEngine {
     var canShowPreviousPeriod = false
     var canShowNextPeriod = false
 
-    // 热门排行缓存
+    // 常用项目排行缓存
     var topWebsites: [RankingEntry] = []
     var topPDFs: [RankingEntry] = []
 
-    // 合并后的报告高级统计量
+    // 合并后的报告扩展统计量
     var studyDuration: TimeInterval = 0
     var entertainmentDuration: TimeInterval = 0
     var activeDays: Int = 0
@@ -414,7 +414,7 @@ final class StatisticsEngine {
             let currentEntertainmentLogs = newFilteredLogs.filter { Self.isEntertainmentLog($0) }
 
             // 5. 计算每日的概览图表趋势点和当前选中的天数。
-            // 传入 newFilteredLogs (全部日志，用于获取所有活跃天数以保证可在图表上点选) 和 currentStudyLogs (仅学习日志，用于累计专注时长)
+            // 传入 newFilteredLogs（全部日志，用于获取所有活跃天数以保证可在图表上点选）和 currentStudyLogs（仅学习日志，用于累计学习时长）。
             let newDaySummaries = Self.dailySummaries(for: newFilteredLogs, studyLogs: currentStudyLogs)
             let resolvedDay = Self.resolvedSelectedDay(
                 currentSelection: currentSelectedDay,
@@ -430,18 +430,18 @@ final class StatisticsEngine {
             let activeDays = newDaySummaries.filter { $0.totalTime > 0 }.count
             let averageDailyDuration = activeDays > 0 ? studyDuration / Double(activeDays) : 0
 
-            // 7. 计算高峰日（最专注的一天）与低谷日（已完成天数内学习时间最少的一天）。
+            // 7. 计算高峰日（学习时间最多的一天）与低谷日（已完成天数内学习时间最少的一天）。
             let todayStart = calendar.startOfDay(for: now)
             let completedDays = newDaySummaries.filter { $0.date < todayStart }
             let strongestDay = completedDays.max(by: { $0.totalTime < $1.totalTime })
             let shortestActiveDay = completedDays.min(by: { $0.totalTime < $1.totalTime })
 
-            // 8. 连续专注天数、常看载体（PDF/网页）等计算。
+            // 8. 计算连续学习天数、常用 PDF/网页等数据。
             let longestStreak = Self.longestStreak(in: newDaySummaries, calendar: calendar)
             let websiteDuration = currentStudyLogs.filter(\.isWebsite).reduce(0) { $0 + $1.duration }
             let pdfDuration = currentStudyLogs.filter(\.isPDF).reduce(0) { $0 + $1.duration }
 
-            // 9. 时段分布（如最常专注时段、最早最晚专注时刻）。
+            // 9. 计算时段分布，包括最常学习时段、最早开始和最晚结束时间。
             let primaryTimeSlot = Self.strongestTimeSlot(in: currentStudyLogs, calendar: calendar)
             let earliestStudyStart = Self.earliestStudyStart(in: currentStudyLogs, calendar: calendar)
             let latestStudyEnd = Self.latestStudyEnd(in: currentStudyLogs, calendar: calendar)
@@ -456,7 +456,7 @@ final class StatisticsEngine {
             // 11. 与上一周期进行同比数据比较。
             let comparison = Self.buildComparison(currentLogs: currentStudyLogs, previousLogs: previousStudyLogs)
 
-            // 12. 提取全周期前3名热门网站和热门PDF
+            // 12. 提取全周期前三名常用网站和常用 PDF。
             let topWebsites = Self.rankingEntries(for: currentStudyLogs.filter(\.isWebsite), dimension: .domain).prefix(3).map { $0 }
             let topPDFs = Self.rankingEntries(for: currentStudyLogs.filter(\.isPDF), dimension: .item).prefix(3).map { $0 }
 
