@@ -151,15 +151,36 @@ struct StatisticsView: View {
                     }
                 }
             }
+            
+            // 12. 年度时光印记报告 - 采用应用内悬浮卡片机制，100% 避免系统级 Sheet 窗口自带的白色直角边框与阻碍退出问题。
+            if showAnnualReport {
+                // 黑色半透明背景遮罩，阻断下层点击，提供电影级遮罩效果
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                            showAnnualReport = false
+                        }
+                    }
+                
+                // 年度报告卡片
+                AnnualReportView(dismissAction: {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        showAnnualReport = false
+                    }
+                })
+                .modelContext(modelContext)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.92).combined(with: .opacity),
+                    removal: .scale(scale: 0.95).combined(with: .opacity)
+                ))
+                .zIndex(100)
+            }
         }
         .frame(width: AppConfig.statisticsWidth, height: AppConfig.statisticsHeight)
         .ignoresSafeArea(.all, edges: .top)
         .onAppear { refreshRangeData() }
-        .sheet(isPresented: $showAnnualReport) {
-            AnnualReportView()
-                .modelContext(modelContext)
-                .presentationBackground(.clear)
-        }
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
             refreshRangeData()
         }
@@ -215,7 +236,11 @@ struct StatisticsView: View {
                             .font(.system(size: 20, weight: .bold))
                             .foregroundColor(.primary.opacity(0.88))
                         
-                        Button(action: { showAnnualReport = true }) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                                showAnnualReport = true
+                            }
+                        }) {
                             HStack(spacing: 4) {
                                 Image(systemName: "sparkles")
                                 Text("年度报告")

@@ -8,16 +8,28 @@ struct AnnualReportView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     
-    // 1. 定义高对比度的年度报告专用配色（避免深蓝色/深紫色在暗色背景下不可见）。
-    static let studyColor = Color(red: 0.4, green: 0.8, blue: 1.0)
-    static let entertainmentColor = Color(red: 0.9, green: 0.5, blue: 1.0)
+    // 用于内部悬浮卡片模式的自定义关闭回调
+    var dismissAction: (() -> Void)? = nil
+    
+    // 1. 年度报告跟随主应用的浅色信息卡风格，避免暗色报告与统计页整体视觉割裂。
+    static let studyColor = Color(red: 0.12, green: 0.44, blue: 0.82)
+    static let entertainmentColor = Color(red: 0.80, green: 0.32, blue: 0.58)
+    static let websiteColor = Color(red: 0.06, green: 0.56, blue: 0.48)
+    static let pdfColor = Color(red: 0.84, green: 0.45, blue: 0.12)
+    static let primaryText = Color(red: 0.12, green: 0.14, blue: 0.18)
+    static let secondaryText = Color(red: 0.36, green: 0.40, blue: 0.48)
+    static let tertiaryText = Color(red: 0.56, green: 0.60, blue: 0.68)
+    static let cardFill = Color.white.opacity(0.82)
+    static let softFill = Color(red: 0.95, green: 0.97, blue: 0.99)
+    static let borderColor = Color.black.opacity(0.08)
     
     @State private var engine = StatisticsEngine()
     @State private var currentPage = 0
     @State private var isLoading = true
     @State private var appearAnimate = false
+    @State private var reportYear = Calendar.current.component(.year, from: Date())
     
-    private let totalPages = 6
+    private let totalPages = 8
     private let calendar = Calendar.current
     
     var body: some View {
@@ -32,46 +44,28 @@ struct AnnualReportView: View {
             }
             .frame(width: 480, height: 640)
             .background(
-                ZStack {
-                    // 1. 暗夜靛紫蔚蓝固态深层渐变底色，确保色彩饱和度，100% 摆脱系统窗口发灰的毛玻璃底色问题。
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.05, green: 0.05, blue: 0.12),
-                            Color(red: 0.12, green: 0.08, blue: 0.22),
-                            Color(red: 0.03, green: 0.03, blue: 0.07)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .cornerRadius(24)
-                    
-                    // 2. 将极光动感炫彩背景内嵌入卡片内部，确保在任何宿主窗口下都能100%完美展示彩色光晕。
-                    AuroraBackground()
-                        .cornerRadius(24)
-                        .opacity(0.85)
-                }
+                LightReportBackground()
                 .overlay(
                     RoundedRectangle(cornerRadius: 24)
-                        .stroke(
-                            LinearGradient(
-                                colors: [.white.opacity(0.18), .white.opacity(0.04)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
+                        .stroke(AnnualReportView.borderColor, lineWidth: 1)
                 )
             )
-            .shadow(color: Color.black.opacity(0.35), radius: 25, x: 0, y: 12)
+            .shadow(color: Color.black.opacity(0.16), radius: 24, x: 0, y: 14)
             
             // 3. 右上角浮动关闭按钮。
             VStack {
                 HStack {
                     Spacer()
-                    Button(action: { dismiss() }) {
+                    Button(action: {
+                        if let dismissAction {
+                            dismissAction()
+                        } else {
+                            dismiss()
+                        }
+                    }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 24))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(AnnualReportView.secondaryText.opacity(0.55))
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
@@ -123,7 +117,7 @@ struct AnnualReportView: View {
             
             Text("正在编排您的年度时光印记...")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AnnualReportView.secondaryText)
         }
     }
     
@@ -134,34 +128,53 @@ struct AnnualReportView: View {
                 Group {
                     switch currentPage {
                     case 0:
-                        CoverCard(appear: appearAnimate)
+                        CoverCard(year: reportYear, appear: appearAnimate)
                     case 1:
+                        AnnualOverviewCard(
+                            studyDuration: engine.studyDuration,
+                            activeDays: engine.activeDays,
+                            averageDailyDuration: engine.averageDailyDuration,
+                            topAppSummary: engine.topAppSummary,
+                            comparison: engine.comparison,
+                            appear: appearAnimate
+                        )
+                    case 2:
                         FocusRatioCard(
                             studyDuration: engine.studyDuration,
                             entertainmentDuration: engine.entertainmentDuration,
                             appear: appearAnimate
                         )
-                    case 2:
+                    case 3:
                         RhythmCard(
                             primarySlot: engine.primaryTimeSlot,
                             earliest: engine.earliestStudyStart,
                             latest: engine.latestStudyEnd,
+                            hourlyDurations: engine.hourlyDurations,
                             appear: appearAnimate
                         )
-                    case 3:
+                    case 4:
+                        ContentMixCard(
+                            websiteDuration: engine.websiteDuration,
+                            pdfDuration: engine.pdfDuration,
+                            topApps: engine.rankingEntries,
+                            totalDuration: engine.rangeTotalDuration,
+                            appear: appearAnimate
+                        )
+                    case 5:
                         CompanionCard(
                             topWebsites: engine.topWebsites,
                             topPDFs: engine.topPDFs,
                             appear: appearAnimate
                         )
-                    case 4:
+                    case 6:
                         StreakCard(
                             longestStreak: engine.longestStreak,
                             strongestDay: engine.strongestDay,
+                            shortestActiveDay: engine.shortestActiveDay,
                             activeDays: engine.activeDays,
                             appear: appearAnimate
                         )
-                    case 5:
+                    case 7:
                         ArchetypeCard(
                             pdfDuration: engine.pdfDuration,
                             websiteDuration: engine.websiteDuration,
@@ -183,7 +196,7 @@ struct AnnualReportView: View {
                 Button(action: { switchPage(to: currentPage - 1) }) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(currentPage > 0 ? .white : .white.opacity(0.15))
+                        .foregroundColor(currentPage > 0 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
                         .padding(10)
                 }
                 .buttonStyle(.plain)
@@ -196,7 +209,7 @@ struct AnnualReportView: View {
                 HStack(spacing: 8) {
                     ForEach(0..<totalPages, id: \.self) { index in
                         Circle()
-                            .fill(index == currentPage ? AnnualReportView.studyColor : Color.white.opacity(0.25))
+                            .fill(index == currentPage ? AnnualReportView.studyColor : AnnualReportView.borderColor)
                             .frame(width: index == currentPage ? 8 : 6, height: index == currentPage ? 8 : 6)
                             .animation(.spring(response: 0.3), value: currentPage)
                     }
@@ -207,7 +220,7 @@ struct AnnualReportView: View {
                 Button(action: { switchPage(to: currentPage + 1) }) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(currentPage < totalPages - 1 ? .white : .white.opacity(0.15))
+                        .foregroundColor(currentPage < totalPages - 1 ? AnnualReportView.primaryText : AnnualReportView.tertiaryText.opacity(0.35))
                         .padding(10)
                 }
                 .buttonStyle(.plain)
@@ -224,6 +237,7 @@ struct AnnualReportView: View {
     private func loadYearlyData() {
         // 1. 获取当前系统时间，并提取今年年份作为报告的时间参考点。
         let now = Date()
+        reportYear = calendar.component(.year, from: now)
         
         // 2. 将引擎的时间基准调整为当前日期，以便统计整年数据。
         engine.referenceDate = now
@@ -272,10 +286,17 @@ struct AnnualReportView: View {
     }
 }
 
+private func formatDetailedDuration(_ seconds: TimeInterval) -> String {
+    let hours = Int(seconds) / 3600
+    let minutes = (Int(seconds) % 3600) / 60
+    return hours > 0 ? "\(hours)小时\(minutes)分钟" : "\(minutes)分钟"
+}
+
 // MARK: - Slide Pages Definitions
 
 // Cover Page
 private struct CoverCard: View {
+    let year: Int
     let appear: Bool
     
     var body: some View {
@@ -291,18 +312,18 @@ private struct CoverCard: View {
                 .opacity(appear ? 1.0 : 0.0)
             
             VStack(spacing: 8) {
-                Text("2026")
+                Text(String(year))
                     .font(.system(size: 54, weight: .black, design: .monospaced))
-                    .foregroundColor(.white)
+                    .foregroundColor(AnnualReportView.primaryText)
                     .tracking(4)
                 
                 Text("时间的回响")
                     .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AnnualReportView.primaryText)
                 
                 Text("— GrandleTick 年度学习报告 —")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AnnualReportView.secondaryText)
             }
             .offset(y: appear ? 0 : 20)
             .opacity(appear ? 1.0 : 0.0)
@@ -311,11 +332,107 @@ private struct CoverCard: View {
             
             Text("轻触右下角箭头，开启您的专注旅程")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(AnnualReportView.tertiaryText)
                 .padding(.bottom, 40)
                 .opacity(appear ? 1.0 : 0.0)
         }
         .padding(32)
+    }
+}
+
+// Page 1: Overview
+private struct AnnualOverviewCard: View {
+    let studyDuration: TimeInterval
+    let activeDays: Int
+    let averageDailyDuration: TimeInterval
+    let topAppSummary: AppDurationSummary?
+    let comparison: ReportComparison?
+    let appear: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            titleSection(title: "年度总览", subtitle: "把这一年的核心专注指标先铺开")
+            
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                metricTile(title: "学习总时长", value: formatDetailedDuration(studyDuration), icon: "clock.fill", tint: AnnualReportView.studyColor)
+                metricTile(title: "活跃天数", value: "\(activeDays) 天", icon: "calendar.badge.checkmark", tint: .green)
+                metricTile(title: "日均学习", value: formatDetailedDuration(averageDailyDuration), icon: "chart.bar.fill", tint: .orange)
+                metricTile(title: "首位应用", value: topAppSummary?.displayName ?? "暂无数据", icon: "app.badge.fill", tint: .purple)
+            }
+            .opacity(appear ? 1.0 : 0.0)
+            .offset(y: appear ? 0 : 16)
+            
+            if let comparison {
+                comparisonPanel(comparison)
+                    .opacity(appear ? 1.0 : 0.0)
+                    .offset(y: appear ? 0 : 16)
+            }
+            
+            Spacer()
+        }
+        .padding(40)
+    }
+    
+    private func metricTile(title: String, value: String, icon: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(tint)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(AnnualReportView.secondaryText)
+            
+            Text(value)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(AnnualReportView.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
+        .padding(14)
+        .background(AnnualReportView.cardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AnnualReportView.borderColor, lineWidth: 1)
+        )
+    }
+    
+    private func comparisonPanel(_ comparison: ReportComparison) -> some View {
+        let isGrowing = comparison.totalDurationDelta >= 0
+        let rateText = comparison.totalDurationChangeRate.map { String(format: "%.0f%%", abs($0) * 100) } ?? "无法比较"
+        
+        return HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill((isGrowing ? Color.green : Color.orange).opacity(0.12))
+                    .frame(width: 44, height: 44)
+                Image(systemName: isGrowing ? "arrow.up.right" : "arrow.down.right")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(isGrowing ? .green : .orange)
+            }
+            
+            VStack(alignment: .leading, spacing: 5) {
+                Text("相比去年")
+                    .font(.caption)
+                    .foregroundColor(AnnualReportView.secondaryText)
+                Text("\(isGrowing ? "增加" : "减少") \(formatDetailedDuration(abs(comparison.totalDurationDelta)))")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AnnualReportView.primaryText)
+                Text("活跃天数变化 \(comparison.activeDaysDelta >= 0 ? "+" : "")\(comparison.activeDaysDelta) 天 · 变化率 \(rateText)")
+                    .font(.system(size: 11))
+                    .foregroundColor(AnnualReportView.tertiaryText)
+            }
+            Spacer()
+        }
+        .padding(16)
+        .background(AnnualReportView.softFill)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AnnualReportView.borderColor, lineWidth: 1)
+        )
     }
 }
 
@@ -345,7 +462,7 @@ private struct FocusRatioCard: View {
                         .foregroundColor(AnnualReportView.studyColor)
                     Text(formatDetailedDuration(studyDuration))
                         .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(AnnualReportView.primaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .opacity(appear ? 1.0 : 0.0)
@@ -358,7 +475,7 @@ private struct FocusRatioCard: View {
                         .foregroundColor(AnnualReportView.entertainmentColor)
                     Text(formatDetailedDuration(entertainmentDuration))
                         .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(AnnualReportView.primaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .opacity(appear ? 1.0 : 0.0)
@@ -407,10 +524,11 @@ private struct RhythmCard: View {
     let primarySlot: ReportTimeSlot?
     let earliest: Date?
     let latest: Date?
+    let hourlyDurations: [Double]
     let appear: Bool
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 32) {
+        VStack(alignment: .leading, spacing: 26) {
             titleSection(title: "探寻高效的旋律", subtitle: "捕捉你日常专注的黄金时段与节奏")
             
             VStack(spacing: 20) {
@@ -423,9 +541,9 @@ private struct RhythmCard: View {
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text("黄金专注时段")
-                            .font(.caption).foregroundColor(.white.opacity(0.5))
+                            .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                         Text(primarySlot?.title ?? "全天平衡")
-                            .font(.system(size: 20, weight: .bold)).foregroundColor(.white)
+                            .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
                     }
                     Spacer()
                 }
@@ -442,11 +560,11 @@ private struct RhythmCard: View {
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("最早的破晓专注")
-                                .font(.caption).foregroundColor(.white.opacity(0.5))
+                                .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatClock(earliest))
-                                .font(.system(size: 20, weight: .bold)).foregroundColor(.white)
+                                .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
                             Text("晨曦微露时，你已踏上专注的旅途")
-                                .font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                                .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
                     }
@@ -464,11 +582,11 @@ private struct RhythmCard: View {
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("最晚的守夜专注")
-                               .font(.caption).foregroundColor(.white.opacity(0.5))
+                               .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatClock(latest))
-                                .font(.system(size: 20, weight: .bold)).foregroundColor(.white)
+                                .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
                             Text("夜阑人静，微弱窗口光芒伴你前行")
-                                .font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                                .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
                     }
@@ -477,15 +595,208 @@ private struct RhythmCard: View {
                 }
             }
             
+            hourlyHeatmap
+                .opacity(appear ? 1.0 : 0.0)
+                .offset(y: appear ? 0 : 15)
+            
             Spacer()
         }
         .padding(40)
+    }
+    
+    private var hourlyHeatmap: some View {
+        let maxValue = max(hourlyDurations.max() ?? 0, 1)
+        
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("24 小时专注热力")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(AnnualReportView.primaryText)
+            
+            HStack(alignment: .bottom, spacing: 4) {
+                ForEach(0..<24, id: \.self) { hour in
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(AnnualReportView.studyColor.opacity(0.22 + 0.68 * hourlyDurations[hour] / maxValue))
+                        .frame(height: max(8, 54 * hourlyDurations[hour] / maxValue))
+                        .frame(maxWidth: .infinity)
+                        .help("\(hour):00 · \(formatCompactDuration(hourlyDurations[hour]))")
+                }
+            }
+            .frame(height: 60, alignment: .bottom)
+            
+            HStack {
+                Text("0")
+                Spacer()
+                Text("6")
+                Spacer()
+                Text("12")
+                Spacer()
+                Text("18")
+                Spacer()
+                Text("24")
+            }
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .foregroundColor(AnnualReportView.tertiaryText)
+        }
+        .padding(14)
+        .background(AnnualReportView.cardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AnnualReportView.borderColor, lineWidth: 1)
+        )
     }
     
     private func formatClock(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
+    }
+    
+    private func formatCompactDuration(_ seconds: TimeInterval) -> String {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        return hours > 0 ? "\(hours)小时\(minutes)分" : "\(minutes)分"
+    }
+}
+
+// Page 4: Content Mix
+private struct ContentMixCard: View {
+    let websiteDuration: TimeInterval
+    let pdfDuration: TimeInterval
+    let topApps: [RankingEntry]
+    let totalDuration: TimeInterval
+    let appear: Bool
+    
+    private var contentTotal: TimeInterval {
+        max(1, websiteDuration + pdfDuration)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            titleSection(title: "内容结构", subtitle: "从载体和应用两个角度观察年度活动来源")
+            
+            VStack(spacing: 14) {
+                mixBar(
+                    title: "网页资料",
+                    value: websiteDuration,
+                    total: contentTotal,
+                    color: AnnualReportView.websiteColor,
+                    icon: "globe"
+                )
+                mixBar(
+                    title: "PDF 阅读",
+                    value: pdfDuration,
+                    total: contentTotal,
+                    color: AnnualReportView.pdfColor,
+                    icon: "doc.richtext.fill"
+                )
+            }
+            .opacity(appear ? 1.0 : 0.0)
+            .offset(y: appear ? 0 : 15)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                Text("年度应用 Top 3")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(AnnualReportView.primaryText)
+                
+                if topApps.isEmpty {
+                    noDataRow(text: "今年还没有可展示的应用排行")
+                } else {
+                    ForEach(Array(topApps.prefix(3).enumerated()), id: \.element.id) { index, item in
+                        appRankRow(index: index + 1, item: item)
+                    }
+                }
+            }
+            .padding(16)
+            .background(AnnualReportView.cardFill)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AnnualReportView.borderColor, lineWidth: 1)
+            )
+            .opacity(appear ? 1.0 : 0.0)
+            .offset(y: appear ? 0 : 15)
+            
+            Spacer()
+        }
+        .padding(40)
+    }
+    
+    private func mixBar(title: String, value: TimeInterval, total: TimeInterval, color: Color, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AnnualReportView.primaryText)
+                Spacer()
+                Text(formatCompactDuration(value))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(AnnualReportView.secondaryText)
+            }
+            
+            GeometryReader { geo in
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(color.opacity(0.14))
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(color)
+                            .frame(width: geo.size.width * min(1, value / total))
+                    }
+            }
+            .frame(height: 10)
+            
+            Text(String(format: "占内容载体 %.0f%%", value / total * 100))
+                .font(.system(size: 10))
+                .foregroundColor(AnnualReportView.tertiaryText)
+        }
+        .padding(14)
+        .background(AnnualReportView.softFill)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+    
+    private func appRankRow(index: Int, item: RankingEntry) -> some View {
+        let share = totalDuration > 0 ? item.totalTime / totalDuration : 0
+        
+        return HStack(spacing: 12) {
+            Text("\(index)")
+                .font(.system(size: 12, weight: .black, design: .monospaced))
+                .foregroundColor(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(AnnualReportView.studyColor.opacity(index == 1 ? 1.0 : 0.68)))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AnnualReportView.primaryText)
+                    .lineLimit(1)
+                Text(String(format: "占年度总时长 %.0f%%", share * 100))
+                    .font(.system(size: 10))
+                    .foregroundColor(AnnualReportView.tertiaryText)
+            }
+            
+            Spacer()
+            
+            Text(formatCompactDuration(item.totalTime))
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(AnnualReportView.secondaryText)
+        }
+        .padding(.vertical, 6)
+    }
+    
+    private func noDataRow(text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(AnnualReportView.tertiaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 10)
+    }
+    
+    private func formatCompactDuration(_ seconds: TimeInterval) -> String {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        return hours > 0 ? "\(hours)小时\(minutes)分" : "\(minutes)分"
     }
 }
 
@@ -540,28 +851,32 @@ private struct CompanionCard: View {
         HStack {
             Text(name)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(AnnualReportView.primaryText)
                 .lineLimit(1)
             Spacer()
             Text(formatCompactDuration(duration))
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AnnualReportView.secondaryText)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(12)
+        .background(AnnualReportView.cardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AnnualReportView.borderColor, lineWidth: 1)
+        )
     }
     
     private func noDataRow(text: String) -> some View {
         Text(text)
             .font(.caption)
-            .foregroundColor(.white.opacity(0.3))
+            .foregroundColor(AnnualReportView.tertiaryText)
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white.opacity(0.03))
-            .cornerRadius(12)
+            .background(AnnualReportView.softFill)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
     
     private func formatCompactDuration(_ seconds: TimeInterval) -> String {
@@ -575,6 +890,7 @@ private struct CompanionCard: View {
 private struct StreakCard: View {
     let longestStreak: Int
     let strongestDay: DaySummary?
+    let shortestActiveDay: DaySummary?
     let activeDays: Int
     let appear: Bool
     
@@ -592,9 +908,9 @@ private struct StreakCard: View {
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text("最长连续坚持")
-                            .font(.caption).foregroundColor(.white.opacity(0.5))
+                            .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                         Text("\(longestStreak) 天")
-                            .font(.system(size: 24, weight: .bold)).foregroundColor(.white)
+                            .font(.system(size: 24, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
                     }
                     Spacer()
                 }
@@ -610,9 +926,9 @@ private struct StreakCard: View {
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text("累计活跃天数")
-                            .font(.caption).foregroundColor(.white.opacity(0.5))
+                            .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                         Text("\(activeDays) 天")
-                            .font(.system(size: 24, weight: .bold)).foregroundColor(.white)
+                            .font(.system(size: 24, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
                     }
                     Spacer()
                 }
@@ -629,11 +945,32 @@ private struct StreakCard: View {
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("单日最强爆发")
-                                .font(.caption).foregroundColor(.white.opacity(0.5))
+                                .font(.caption).foregroundColor(AnnualReportView.secondaryText)
                             Text(formatCompactDuration(strongestDay.totalTime))
-                                .font(.system(size: 24, weight: .bold)).foregroundColor(.white)
+                                .font(.system(size: 24, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
                             Text("在 \(formatDate(strongestDay.date))，你与高强度的心流融为一体")
-                                .font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                                .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
+                        }
+                        Spacer()
+                    }
+                    .opacity(appear ? 1.0 : 0.0)
+                    .offset(y: appear ? 0 : 15)
+                }
+                
+                if let shortestActiveDay, shortestActiveDay.totalTime > 0 {
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle().fill(Color.indigo.opacity(0.12)).frame(width: 48, height: 48)
+                            Image(systemName: "gauge.low").font(.system(size: 20)).foregroundColor(.indigo)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("最低学习日")
+                                .font(.caption).foregroundColor(AnnualReportView.secondaryText)
+                            Text(formatCompactDuration(shortestActiveDay.totalTime))
+                                .font(.system(size: 20, weight: .bold)).foregroundColor(AnnualReportView.primaryText)
+                            Text("\(formatDate(shortestActiveDay.date)) 留下了可继续补强的空间")
+                                .font(.system(size: 10)).foregroundColor(AnnualReportView.tertiaryText)
                         }
                         Spacer()
                     }
@@ -701,11 +1038,11 @@ private struct ArchetypeCard: View {
             ZStack {
                 Circle()
                     .fill(
-                        LinearGradient(colors: [.blue.opacity(0.12), .purple.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        LinearGradient(colors: [AnnualReportView.studyColor.opacity(0.12), AnnualReportView.pdfColor.opacity(0.16)], startPoint: .topLeading, endPoint: .bottomTrailing)
                     )
                     .frame(width: 100, height: 100)
                     .overlay(
-                        Circle().stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        Circle().stroke(AnnualReportView.borderColor, lineWidth: 1)
                     )
                 
                 Image(systemName: "crown.fill")
@@ -721,11 +1058,11 @@ private struct ArchetypeCard: View {
             VStack(spacing: 8) {
                 Text("您的年度时间人格")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AnnualReportView.secondaryText)
                 
                 Text(archetypeTitle)
                     .font(.system(size: 26, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AnnualReportView.primaryText)
                     .tracking(2)
             }
             .opacity(appear ? 1.0 : 0.0)
@@ -733,7 +1070,7 @@ private struct ArchetypeCard: View {
             // 人格说明
             Text(archetypeDesc)
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(AnnualReportView.secondaryText)
                 .lineSpacing(6)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
@@ -749,10 +1086,10 @@ private struct ArchetypeCard: View {
                     Text("重读报告")
                 }
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AnnualReportView.studyColor)
                 .padding(.vertical, 8)
                 .padding(.horizontal, 16)
-                .background(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                .background(Capsule().stroke(AnnualReportView.studyColor.opacity(0.28), lineWidth: 1))
             }
             .buttonStyle(.plain)
             .focusable(false)
@@ -769,10 +1106,10 @@ private func titleSection(title: String, subtitle: String) -> some View {
     VStack(alignment: .leading, spacing: 6) {
         Text(title)
             .font(.system(size: 22, weight: .bold))
-            .foregroundColor(.white)
+            .foregroundColor(AnnualReportView.primaryText)
         Text(subtitle)
             .font(.caption)
-            .foregroundColor(.white.opacity(0.5))
+            .foregroundColor(AnnualReportView.secondaryText)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
 }
@@ -795,31 +1132,40 @@ struct VisualEffectView: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
-// Aurora Background Animation View
-struct AuroraBackground: View {
-    @State private var animate = false
-    
+// Light Report Background View
+struct LightReportBackground: View {
     var body: some View {
         ZStack {
-            Color(red: 0.06, green: 0.06, blue: 0.09)
-                .ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    Color(red: 0.99, green: 0.98, blue: 0.95),
+                    Color(red: 0.94, green: 0.97, blue: 1.00),
+                    Color(red: 0.98, green: 0.96, blue: 0.99)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
             
-            Circle()
-                .fill(Color.blue.opacity(0.25))
-                .frame(width: 320, height: 320)
-                .blur(radius: 90)
-                .offset(x: animate ? 120 : -120, y: animate ? -140 : 140)
-            
-            Circle()
-                .fill(Color.purple.opacity(0.25))
-                .frame(width: 320, height: 320)
-                .blur(radius: 90)
-                .offset(x: animate ? -140 : 140, y: animate ? 120 : -120)
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 7.0).repeatForever(autoreverses: true)) {
-                animate.toggle()
+            // 1. 用低透明度斜向纹理增强纸面层次，避免浅色报告显得单薄，同时不抢占统计内容的视觉权重。
+            VStack(spacing: 18) {
+                ForEach(0..<18, id: \.self) { _ in
+                    Rectangle()
+                        .fill(Color.white.opacity(0.20))
+                        .frame(height: 1)
+                }
             }
+            .rotationEffect(.degrees(-18))
+            .scaleEffect(1.35)
+            
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.58), Color.white.opacity(0.18)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
         }
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
