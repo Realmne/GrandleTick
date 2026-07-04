@@ -35,6 +35,15 @@ struct GrandleTickApp: App {
             let manager = UsageManager(modelContext: context)
             _usageManager = State(initialValue: manager)
             appDelegate.configure(usageManager: manager, modelContext: context)
+
+            Task.detached(priority: .utility) {
+                // 4. 应用启动后后台预热已结束日期的统计缓存，让“今年/全部”等大范围视图尽量直接命中聚合表。
+                ActivityAggregateCacheStore.prewarmClosedDays(
+                    databaseURL: databaseFileURL,
+                    whitelist: WhitelistSnapshot(whitelist: WhitelistManager.shared),
+                    calendar: .current
+                )
+            }
         } catch {
             fatalError("无法初始化数据库容器: \(error)")
         }
