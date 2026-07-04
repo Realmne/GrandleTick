@@ -122,82 +122,88 @@ struct AnnualReportView: View {
     }
     
     private var mainCardDeck: some View {
-        ZStack(alignment: .bottom) {
-            // 1. 内容切换卡片区，带过渡动画。
-            ZStack {
-                Group {
-                    switch currentPage {
-                    case 0:
-                        CoverCard(year: reportYear, appear: appearAnimate)
-                    case 1:
-                        AnnualOverviewCard(
-                            studyDuration: engine.studyDuration,
-                            activeDays: engine.activeDays,
-                            averageDailyDuration: engine.averageDailyDuration,
-                            topAppSummary: engine.topAppSummary,
-                            comparison: engine.comparison,
-                            appear: appearAnimate
-                        )
-                    case 2:
-                        FocusRatioCard(
-                            studyDuration: engine.studyDuration,
-                            entertainmentDuration: engine.entertainmentDuration,
-                            appear: appearAnimate
-                        )
-                    case 3:
-                        RhythmCard(
-                            primarySlot: engine.primaryTimeSlot,
-                            earliest: engine.earliestStudyStart,
-                            latest: engine.latestStudyEnd,
-                            hourlyDurations: engine.hourlyDurations,
-                            appear: appearAnimate
-                        )
-                    case 4:
-                        ContentMixCard(
-                            websiteDuration: engine.websiteDuration,
-                            pdfDuration: engine.pdfDuration,
-                            topApps: engine.rankingEntries,
-                            totalDuration: engine.rangeTotalDuration,
-                            appear: appearAnimate
-                        )
-                    case 5:
-                        CompanionCard(
-                            topWebsites: engine.topWebsites,
-                            topPDFs: engine.topPDFs,
-                            appear: appearAnimate
-                        )
-                    case 6:
-                        StreakCard(
-                            longestStreak: engine.longestStreak,
-                            strongestDay: engine.strongestDay,
-                            shortestActiveDay: engine.shortestActiveDay,
-                            activeDays: engine.activeDays,
-                            appear: appearAnimate
-                        )
-                    case 7:
-                        ArchetypeCard(
-                            pdfDuration: engine.pdfDuration,
-                            websiteDuration: engine.websiteDuration,
-                            longestStreak: engine.longestStreak,
-                            primarySlot: engine.primaryTimeSlot,
-                            actionReset: { switchPage(to: 0) },
-                            appear: appearAnimate
-                        )
-                    default:
-                        EmptyView()
-                    }
-                }
+        ZStack {
+            // 1. 固定内容区高度，底部 76pt 永远留给翻页导航，避免不同页面内容反向影响导航层坐标。
+            VStack(spacing: 0) {
+                currentReportPage
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+
+                Color.clear
+                    .frame(height: 76)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // 2. 预留固定底部导航区，避免内容文本较少的页面把翻页按钮“吸”到更高位置。
-            .padding(.bottom, 76)
-            .clipped()
-            
+        }
+        .frame(width: 480, height: 640)
+        .overlay(alignment: .bottom) {
+            // 2. 翻页导航使用整张报告卡片作为固定坐标系，不再依赖当前页面内容的布局结果。
             bottomNavigation
                 .padding(.horizontal, 32)
                 .padding(.bottom, 24)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var currentReportPage: some View {
+        switch currentPage {
+        case 0:
+            CoverCard(year: reportYear, appear: appearAnimate)
+        case 1:
+            AnnualOverviewCard(
+                studyDuration: engine.studyDuration,
+                activeDays: engine.activeDays,
+                averageDailyDuration: engine.averageDailyDuration,
+                topAppSummary: engine.topAppSummary,
+                comparison: engine.comparison,
+                appear: appearAnimate
+            )
+        case 2:
+            FocusRatioCard(
+                studyDuration: engine.studyDuration,
+                entertainmentDuration: engine.entertainmentDuration,
+                appear: appearAnimate
+            )
+        case 3:
+            RhythmCard(
+                primarySlot: engine.primaryTimeSlot,
+                earliest: engine.earliestStudyStart,
+                latest: engine.latestStudyEnd,
+                hourlyDurations: engine.hourlyDurations,
+                appear: appearAnimate
+            )
+        case 4:
+            ContentMixCard(
+                websiteDuration: engine.websiteDuration,
+                pdfDuration: engine.pdfDuration,
+                topApps: engine.rankingEntries,
+                totalDuration: engine.rangeTotalDuration,
+                appear: appearAnimate
+            )
+        case 5:
+            CompanionCard(
+                topWebsites: engine.topWebsites,
+                topPDFs: engine.topPDFs,
+                appear: appearAnimate
+            )
+        case 6:
+            StreakCard(
+                longestStreak: engine.longestStreak,
+                strongestDay: engine.strongestDay,
+                shortestActiveDay: engine.shortestActiveDay,
+                activeDays: engine.activeDays,
+                appear: appearAnimate
+            )
+        case 7:
+            ArchetypeCard(
+                pdfDuration: engine.pdfDuration,
+                websiteDuration: engine.websiteDuration,
+                longestStreak: engine.longestStreak,
+                primarySlot: engine.primaryTimeSlot,
+                actionReset: { switchPage(to: 0) },
+                appear: appearAnimate
+            )
+        default:
+            EmptyView()
+        }
     }
     
     private var bottomNavigation: some View {
