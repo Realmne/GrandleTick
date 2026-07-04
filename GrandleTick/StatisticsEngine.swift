@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import SwiftData
 
 // MARK: - Supporting Enums and Models
@@ -110,6 +111,23 @@ struct PreparedLog: Identifiable, Sendable {
     }
 
     init?(log: ActivityLog, whitelist: WhitelistSnapshot, calendar: Calendar) {
+        self.init(
+            snapshot: ActivityLogSnapshot(
+                appName: log.appName,
+                windowTitle: log.windowTitle,
+                startTime: log.startTime,
+                duration: log.duration,
+                domain: log.domain,
+                bilibiliIdentifier: log.bilibiliIdentifier,
+                fullUrl: log.fullUrl,
+                pdfIdentifier: log.pdfIdentifier
+            ),
+            whitelist: whitelist,
+            calendar: calendar
+        )
+    }
+
+    init?(snapshot log: ActivityLogSnapshot, whitelist: WhitelistSnapshot, calendar: Calendar) {
         // 1. 过滤掉无意义的系统权限提示或未知/无效空日志
         if log.windowTitle.contains("权限") || log.windowTitle.contains("未知") || log.appName.isEmpty { return nil }
         
@@ -171,12 +189,107 @@ struct PreparedLog: Identifiable, Sendable {
         self.isStudy = isStudy
     }
 
-    private static func resolveDomain(for log: ActivityLog, whitelist: WhitelistSnapshot) -> String? {
+    private static func resolveDomain(for log: ActivityLogSnapshot, whitelist: WhitelistSnapshot) -> String? {
         // 如果数据库日志里有解析好的 domain，优先直接返回它以保留一般网站的域名数据
         if let domain = log.domain, !domain.isEmpty { return domain }
         // 兜底从窗口标题中尝试提取白名单域名
         let lowercasedWindowTitle = log.windowTitle.lowercased()
         return whitelist.domainKeywords.first { entry in lowercasedWindowTitle.contains(entry.keyword) || (entry.keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩")) }?.domain
+    }
+}
+
+/// 统计页只读快照，避免切换时间范围时在主线程批量实例化 SwiftData 模型对象
+struct ActivityLogSnapshot: Sendable {
+    let appName: String
+    let windowTitle: String
+    let startTime: Date
+    let duration: TimeInterval
+    let domain: String?
+    let bilibiliIdentifier: String?
+    let fullUrl: String?
+    let pdfIdentifier: String?
+}
+
+enum ActivityLogSnapshotStore {
+    static func databaseURL() -> URL {
+        let applicationSupportDirectoryURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return applicationSupportDirectoryURL
+            .appendingPathComponent("GrandleTick", isDirectory: true)
+            .appendingPathComponent("ActivityData.sqlite")
+    }
+
+    static func fetchLogs(databaseURL: URL, interval: DateInterval?) -> [ActivityLogSnapshot] {
+        // 1. 在后台直接读取 SQLite 行，绕开 SwiftData 对象图构建带来的主线程成本。
+        var database: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+
+        guard sqlite3_open_v2(databaseURL.path, &database, flags, nil) == SQLITE_OK else {
+            sqlite3_close(database)
+            return []
+        }
+
+        defer { sqlite3_close(database) }
+
+        let sql: String
+        if interval == nil {
+            sql = """
+            SELECT ZAPPNAME, ZWINDOWTITLE, ZSTARTTIME, ZDURATION, ZDOMAIN, ZBILIBILIIDENTIFIER, ZFULLURL, ZPDFIDENTIFIER
+            FROM ZACTIVITYLOG
+            ORDER BY ZSTARTTIME DESC
+            """
+        } else {
+            sql = """
+            SELECT ZAPPNAME, ZWINDOWTITLE, ZSTARTTIME, ZDURATION, ZDOMAIN, ZBILIBILIIDENTIFIER, ZFULLURL, ZPDFIDENTIFIER
+            FROM ZACTIVITYLOG
+            WHERE ZSTARTTIME >= ? AND ZSTARTTIME < ?
+            ORDER BY ZSTARTTIME DESC
+            """
+        }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            sqlite3_finalize(statement)
+            return []
+        }
+
+        defer { sqlite3_finalize(statement) }
+
+        if let interval {
+            sqlite3_bind_double(statement, 1, interval.start.timeIntervalSinceReferenceDate)
+            sqlite3_bind_double(statement, 2, interval.end.timeIntervalSinceReferenceDate)
+        }
+
+        var snapshots: [ActivityLogSnapshot] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let appName = stringColumn(statement, index: 0) ?? ""
+            let windowTitle = stringColumn(statement, index: 1) ?? ""
+            let startTime = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 2))
+            let duration = sqlite3_column_double(statement, 3)
+
+            snapshots.append(
+                ActivityLogSnapshot(
+                    appName: appName,
+                    windowTitle: windowTitle,
+                    startTime: startTime,
+                    duration: duration,
+                    domain: stringColumn(statement, index: 4),
+                    bilibiliIdentifier: stringColumn(statement, index: 5),
+                    fullUrl: stringColumn(statement, index: 6),
+                    pdfIdentifier: stringColumn(statement, index: 7)
+                )
+            )
+        }
+
+        return snapshots
+    }
+
+    private static func stringColumn(_ statement: OpaquePointer?, index: Int32) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let text = sqlite3_column_text(statement, index) else {
+            return nil
+        }
+        let value = String(cString: text)
+        return value.isEmpty ? nil : value
     }
 }
 
@@ -334,7 +447,11 @@ final class StatisticsEngine {
     var latestStudyEnd: Date?
     var comparison: ReportComparison?
     var hourlyDurations: [Double] = Array(repeating: 0.0, count: 24)
+    var baseDataGeneration: UInt = 0
+    var isLoadingBaseData = false
 
+    private var baseDataLoadingTask: Task<Void, Never>?
+    private var baseDataLoadingToken: UInt = 0
     private var filterComputationTask: Task<Void, Never>?
     private var filterComputationToken: UInt = 0
     private let calendar = Calendar.current
@@ -343,21 +460,45 @@ final class StatisticsEngine {
 
     /// 刷新选定周期下的底量数据，执行数据库抓取并清洗
     func refreshBaseData(for range: StatisticsRange, modelContext: ModelContext, whitelist: WhitelistManager) {
+        baseDataLoadingTask?.cancel()
         filterComputationTask?.cancel()
+        baseDataLoadingToken &+= 1
+
+        let token = baseDataLoadingToken
+        let databaseURL = ActivityLogSnapshotStore.databaseURL()
+        let referenceDate = referenceDate
+        let calendar = calendar
+        isLoadingBaseData = true
 
         // 1. 根据当前参考日期和时间周期计算出要抓取的数据时间跨度。
         let whitelistSnapshot = WhitelistSnapshot(whitelist: whitelist)
-        let sourceLogs = fetchLogs(for: range, referenceDate: referenceDate, modelContext: modelContext)
+        let fetchInterval = fetchInterval(for: range, referenceDate: referenceDate, currentDate: Date())
 
-        // 2. 将原始日志转化为格式化日志（PreparedLog）结构。
-        let newRangeLogs = sourceLogs.compactMap { log in
-            PreparedLog(log: log, whitelist: whitelistSnapshot, calendar: calendar)
+        baseDataLoadingTask = Task.detached(priority: .userInitiated) {
+            let sourceLogs = ActivityLogSnapshotStore.fetchLogs(databaseURL: databaseURL, interval: fetchInterval)
+
+            // 2. 将原始日志转化为格式化日志（PreparedLog）结构。该步骤包含域名、PDF、白名单等派生判断，
+            // 放在后台执行可避免年/月视图切换时阻塞 SwiftUI 主线程。
+            let newRangeLogs = sourceLogs.compactMap { log in
+                PreparedLog(snapshot: log, whitelist: whitelistSnapshot, calendar: calendar)
+            }
+            let newAppFilterOptions = Self.buildFilterOptions(from: newRangeLogs, dimension: .app)
+            let newDomainFilterOptions = Self.buildFilterOptions(from: newRangeLogs, dimension: .domain)
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                guard token == self.baseDataLoadingToken else { return }
+
+                // 3. 将全局状态缓存并生成筛选器的快捷选项。generation 只在整批数据落地后递增，
+                // 让视图层能在正确时机重新套用搜索和筛选条件。
+                self.baseRangeLogs = newRangeLogs
+                self.appFilterOptions = newAppFilterOptions
+                self.domainFilterOptions = newDomainFilterOptions
+                self.baseDataGeneration &+= 1
+                self.isLoadingBaseData = false
+            }
         }
-
-        // 3. 将全局状态缓存并生成筛选器的快捷选项。
-        baseRangeLogs = newRangeLogs
-        appFilterOptions = buildFilterOptions(from: newRangeLogs, dimension: .app)
-        domainFilterOptions = buildFilterOptions(from: newRangeLogs, dimension: .domain)
     }
 
     /// 应用过滤条件（如搜索字词、内容分类、应用白名单等），在独立线程中执行大量聚合和报告生成计算
@@ -660,7 +801,17 @@ final class StatisticsEngine {
         }
     }
 
-    private func buildFilterOptions(from logs: [PreparedLog], dimension: RankingDimension) -> [FilterOption] {
+    private func fetchInterval(for range: StatisticsRange, referenceDate: Date, currentDate: Date) -> DateInterval? {
+        guard let current = interval(for: range, referenceDate: referenceDate, currentDate: currentDate) else {
+            return nil
+        }
+
+        // 为了进行同比对比计算，后台读取当前周期和前一周期两个区间的连续日志。
+        let start = previousInterval(for: range, currentInterval: current)?.start ?? current.start
+        return DateInterval(start: start, end: current.end)
+    }
+
+    nonisolated private static func buildFilterOptions(from logs: [PreparedLog], dimension: RankingDimension) -> [FilterOption] {
         Self.rankingEntries(for: logs, dimension: dimension).map {
             FilterOption(name: $0.name, totalTime: $0.totalTime)
         }

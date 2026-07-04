@@ -187,6 +187,10 @@ struct StatisticsView: View {
         .onChange(of: whitelist.whitelistedApps) { _, _ in refreshRangeData() }
         .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshRangeData() }
         .onChange(of: selectedRange) { _, _ in refreshRangeData() }
+        .onChange(of: engine.baseDataGeneration) { _, _ in
+            sanitizeFilterSelection()
+            refreshFiltersOnly()
+        }
         .onChange(of: selectedDimension) { _, _ in engine.updateRanking(for: selectedDimension) }
         .onChange(of: searchText) { _, _ in scheduleSearchRefresh() }
         .onChange(of: selectedContentFilter) { _, _ in refreshFiltersOnly() }
@@ -390,8 +394,6 @@ struct StatisticsView: View {
 
     private func refreshRangeData() {
         engine.refreshBaseData(for: selectedRange, modelContext: modelContext, whitelist: whitelist)
-        sanitizeFilterSelection()
-        refreshFiltersOnly()
     }
 
     private func refreshFiltersOnly() {
