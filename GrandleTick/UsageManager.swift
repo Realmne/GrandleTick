@@ -389,13 +389,13 @@ final class UsageManager {
         let lowercasedAppName = currentSession.appName.lowercased()
         let isPreview = lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview")
         if isPreview && currentSession.groupedTitle.lowercased().contains(".pdf") {
-            return "当前 PDF 累计"
+            return "当前内容累计"
         }
 
         // 娱乐视频当前不会保存 BV 号，否则现有分类逻辑会把它误判为学习；
         // 因此这里只为具备稳定 BV 标识的知识视频展示可精确汇总的时长。
         if currentSession.domain == "bilibili.com", currentSession.bilibiliIdentifier != nil {
-            return "当前视频累计"
+            return "当前内容累计"
         }
 
         return nil

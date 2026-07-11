@@ -120,35 +120,28 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                         .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
 
-                if let durationLabel = usageManager.currentContentDurationLabel {
-                    VStack(spacing: 8) {
-                        Divider()
-                            .padding(.horizontal, 12)
-
+                    if let durationLabel = usageManager.currentContentDurationLabel {
                         HStack(spacing: 8) {
-                            Label(durationLabel, systemImage: "clock.arrow.circlepath")
-                                .font(.system(size: 11, weight: .medium))
+                            Text(durationLabel)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
 
-                            Spacer(minLength: 8)
-
                             Text(usageManager.formattedCurrentContentDuration)
                                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                .foregroundColor(isStudyActive ? .blue : .purple)
+                                .foregroundColor(.primary.opacity(0.78))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.75)
                         }
-                        .padding(.horizontal, 12)
+                        .padding(.top, 2)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(durationLabel)
                         .accessibilityValue(usageManager.formattedCurrentContentDuration)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .padding(16)
             .frame(maxWidth: .infinity)
