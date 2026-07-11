@@ -7,7 +7,8 @@ final class UsageManager {
     var tracker = ActivityTracker()
 
     var currentWindowTodayDuration: TimeInterval = 0
-    var currentWindowHistoricalDuration: TimeInterval = 0
+    private(set) var currentCategoryTodayDuration: TimeInterval = 0
+    private(set) var currentContentHistoricalDuration: TimeInterval = 0
     var modelContext: ModelContext?
     var menuBarTitleDidChange: ((String) -> Void)?
 
@@ -45,6 +46,24 @@ final class UsageManager {
 
     func flushPendingSession() {
         persistCurrentSession(forceSave: true, endDate: Date())
+    }
+
+    // 清空数据库后重新建立当前会话，避免下一次计时心跳把清空前的历史基准带回界面。
+    func restartTrackingAfterHistoryDeletion(at restartDate: Date = Date()) {
+        // 1. 丢弃指向已删除日志的会话状态和所有旧基准。
+        clearSessionState()
+
+        // 2. 立即清空三个展示口径，确保界面不会短暂残留旧数值。
+        setDisplayedDurations(
+            currentActivityToday: 0,
+            categoryToday: 0,
+            contentHistorical: 0
+        )
+
+        // 3. 强制刷新真实前台后再调和会话。确认框关闭时 tracker 可能仍缓存着此前的 PDF/视频，
+        // 直接用缓存启动会把确认框停留期间重新写入刚清空的数据库。
+        tracker.track(forceRefresh: true)
+        reconcileTrackedActivity(at: restartDate)
     }
 
     // 1. 处理计时器心跳。
@@ -86,7 +105,11 @@ final class UsageManager {
         if trackedActivity?.identity != currentSession?.identity {
             persistCurrentSession(forceSave: true, endDate: now)
             clearSessionState()
-            setDisplayedDurations(today: 0, historical: 0)
+            setDisplayedDurations(
+                currentActivityToday: 0,
+                categoryToday: 0,
+                contentHistorical: 0
+            )
             startSessionIfNeeded(at: now)
             return
         }
@@ -123,7 +146,11 @@ final class UsageManager {
     private func startSessionIfNeeded(at startDate: Date) {
         guard let trackedActivity = TrackedActivity(from: tracker) else {
             clearSessionState()
-            setDisplayedDurations(today: 0, historical: 0)
+            setDisplayedDurations(
+                currentActivityToday: 0,
+                categoryToday: 0,
+                contentHistorical: 0
+            )
             return
         }
 
@@ -251,19 +278,26 @@ final class UsageManager {
         let duration = currentSessionDuration(until: date)
         
         // 1. 当前活动在今日累计的总时长，主要供菜单栏展示。
-        let todayVal = currentBaselineTodayDuration + duration
+        let currentActivityToday = currentBaselineTodayDuration + duration
         
         // 2. 弹窗大字展示的今日分类总时长。根据当前会话属于“学习”还是“娱乐”决定累加哪一项。
-        let historicalVal: TimeInterval
+        let categoryToday: TimeInterval
         if isCurrentSessionStudy {
-            historicalVal = todayBaselineStudyDuration + duration
+            categoryToday = todayBaselineStudyDuration + duration
         } else {
-            historicalVal = todayBaselineEntertainmentDuration + duration
+            categoryToday = todayBaselineEntertainmentDuration + duration
         }
+
+        // 3. 当前 PDF 或知识视频使用“会话开始前的全历史基准 + 当前会话时长”，
+        // 而不是每秒重新查询数据库，避免已定期落库的当前日志被重复累计。
+        let contentHistorical = currentContentDurationLabel == nil
+            ? 0
+            : currentBaselineHistoricalDuration + duration
         
         setDisplayedDurations(
-            today: todayVal,
-            historical: historicalVal
+            currentActivityToday: currentActivityToday,
+            categoryToday: categoryToday,
+            contentHistorical: contentHistorical
         )
     }
 
@@ -276,12 +310,25 @@ final class UsageManager {
         
         let matchingLogs: [ActivityLog]
         if let pdfId = identity.pdfIdentifier, !pdfId.isEmpty {
-            // 对 PDF 来说，基于 pdfIdentifier 或相同 windowTitle（传统记录）来匹配基准时长
+            // 1. 现代 PDF 记录只按稳定文件指纹匹配，避免两个同名但内容不同的 PDF 串账；
+            // 仅对没有指纹的旧记录保留“应用 + 标题”兜底。
+            let identifiedDescriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
+                log.pdfIdentifier == pdfId
+            })
+            let legacyDescriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
+                log.pdfIdentifier == nil && log.appName == appName && log.windowTitle == groupedTitle
+            })
+            let identifiedLogs = (try? context.fetch(identifiedDescriptor)) ?? []
+            let legacyLogs = (try? context.fetch(legacyDescriptor)) ?? []
+            matchingLogs = identifiedLogs + legacyLogs
+        } else if let bilibiliIdentifier = identity.bilibiliIdentifier, !bilibiliIdentifier.isEmpty {
+            // 2. 知识视频直接按 BV 号汇总，使同一视频在不同浏览器中打开或标题变化后仍连续累计。
             let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
-                log.appName == appName && (log.pdfIdentifier == pdfId || log.windowTitle == groupedTitle)
+                log.bilibiliIdentifier == bilibiliIdentifier
             })
             matchingLogs = (try? context.fetch(descriptor)) ?? []
         } else {
+            // 3. 没有内容级稳定标识的普通应用或网站沿用原有身份口径。
             let descriptor = FetchDescriptor<ActivityLog>(predicate: #Predicate { log in
                 log.appName == appName && log.windowTitle == groupedTitle
             })
@@ -290,6 +337,7 @@ final class UsageManager {
             }
         }
 
+        // 4. 同一批匹配日志同时生成今日基准和全历史基准；当前会话尚未创建日志，因此后续可安全叠加实时秒数。
         let startOfDay = Calendar.current.startOfDay(for: now)
         let today = matchingLogs
             .filter { $0.startTime >= startOfDay }
@@ -298,9 +346,14 @@ final class UsageManager {
         return DurationBaseline(today: today, historical: historical)
     }
 
-    private func setDisplayedDurations(today: TimeInterval, historical: TimeInterval) {
-        currentWindowTodayDuration = today
-        currentWindowHistoricalDuration = historical
+    private func setDisplayedDurations(
+        currentActivityToday: TimeInterval,
+        categoryToday: TimeInterval,
+        contentHistorical: TimeInterval
+    ) {
+        currentWindowTodayDuration = currentActivityToday
+        currentCategoryTodayDuration = categoryToday
+        currentContentHistoricalDuration = contentHistorical
         publishMenuBarTitle()
     }
 
@@ -321,9 +374,31 @@ final class UsageManager {
         formatTime(currentWindowTodayDuration)
     }
 
-    // 弹窗中展示的格式化时长。现在的逻辑已调整为“今日分类总时长”，即今天在当前分类（学习/娱乐）下的所有活动行为的总时长累加。
+    // 弹窗大字展示今天在当前分类（学习/娱乐）下的所有活动累计。
     var formattedPopoverDuration: String {
-        formatTime(currentWindowHistoricalDuration)
+        formatTime(currentCategoryTodayDuration)
+    }
+
+    var formattedCurrentContentDuration: String {
+        formatTime(currentContentHistoricalDuration)
+    }
+
+    var currentContentDurationLabel: String? {
+        guard let currentSession else { return nil }
+
+        let lowercasedAppName = currentSession.appName.lowercased()
+        let isPreview = lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview")
+        if isPreview && currentSession.groupedTitle.lowercased().contains(".pdf") {
+            return "当前 PDF 累计"
+        }
+
+        // 娱乐视频当前不会保存 BV 号，否则现有分类逻辑会把它误判为学习；
+        // 因此这里只为具备稳定 BV 标识的知识视频展示可精确汇总的时长。
+        if currentSession.domain == "bilibili.com", currentSession.bilibiliIdentifier != nil {
+            return "当前视频累计"
+        }
+
+        return nil
     }
 
     // MARK: - Classification Helpers

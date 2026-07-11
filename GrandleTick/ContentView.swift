@@ -122,6 +122,33 @@ struct ContentView: View {
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
+
+                if let durationLabel = usageManager.currentContentDurationLabel {
+                    VStack(spacing: 8) {
+                        Divider()
+                            .padding(.horizontal, 12)
+
+                        HStack(spacing: 8) {
+                            Label(durationLabel, systemImage: "clock.arrow.circlepath")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+
+                            Spacer(minLength: 8)
+
+                            Text(usageManager.formattedCurrentContentDuration)
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundColor(isStudyActive ? .blue : .purple)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                        }
+                        .padding(.horizontal, 12)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(durationLabel)
+                        .accessibilityValue(usageManager.formattedCurrentContentDuration)
+                    }
+                }
             }
             .padding(16)
             .frame(maxWidth: .infinity)
@@ -299,8 +326,7 @@ struct ContentView: View {
             let allLogs = try modelContext.fetch(descriptor)
             for log in allLogs { modelContext.delete(log) }
             try modelContext.save()
-            usageManager.currentWindowTodayDuration = 0
-            usageManager.currentWindowHistoricalDuration = 0
+            usageManager.restartTrackingAfterHistoryDeletion()
         } catch {
             print("❌ [Database] 清空失败: \(error.localizedDescription)")
         }

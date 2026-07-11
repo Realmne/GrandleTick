@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 // SwiftData 在定义 Model 时不提供灵活的复合索引创建，导致大数据量下统计查询较慢。
-// 本方法在应用启动时直接操作底层 SQLite，建立时间、应用和域名索引以解决数据中心查询较慢的问题。
+// 本方法在应用启动时直接操作底层 SQLite，建立时间、应用、内容标识和域名索引以解决统计查询较慢的问题。
 enum ActivityLogIndexInstaller {
     static func installIfNeeded(databaseURL: URL) {
         // 1. 打开指定路径的 SQLite 数据库。
@@ -21,7 +21,8 @@ enum ActivityLogIndexInstaller {
             "CREATE INDEX IF NOT EXISTS ZACTIVITYLOG_ZSTARTTIME_IDX ON ZACTIVITYLOG (ZSTARTTIME)",
             "CREATE INDEX IF NOT EXISTS ZACTIVITYLOG_APP_TITLE_IDX ON ZACTIVITYLOG (ZAPPNAME, ZWINDOWTITLE)",
             "CREATE INDEX IF NOT EXISTS ZACTIVITYLOG_DOMAIN_IDX ON ZACTIVITYLOG (ZDOMAIN)",
-            "CREATE INDEX IF NOT EXISTS ZACTIVITYLOG_BILIBILI_IDX ON ZACTIVITYLOG (ZBILIBILIIDENTIFIER)"
+            "CREATE INDEX IF NOT EXISTS ZACTIVITYLOG_BILIBILI_IDX ON ZACTIVITYLOG (ZBILIBILIIDENTIFIER)",
+            "CREATE INDEX IF NOT EXISTS ZACTIVITYLOG_PDF_IDX ON ZACTIVITYLOG (ZPDFIDENTIFIER)"
         ]
 
         for statement in statements {
@@ -29,4 +30,3 @@ enum ActivityLogIndexInstaller {
         }
     }
 }
-
