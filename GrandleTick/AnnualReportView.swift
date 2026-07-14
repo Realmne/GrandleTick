@@ -105,6 +105,14 @@ struct AnnualReportView: View {
                 }
             }
         }
+        .onChange(of: engine.baseDataGeneration) { _, _ in
+            // 基础日志是异步读取的，只能在数据真正落地后启动年度指标计算。
+            calculateYearlyMetrics()
+        }
+        .onChange(of: engine.filterComputationGeneration) { _, _ in
+            // 统计字段全部回写后再展示报告，避免固定延时导致空数据页面。
+            finishLoadingYearlyReport()
+        }
     }
     
     // MARK: - Subviews
@@ -174,8 +182,8 @@ struct AnnualReportView: View {
             ContentMixCard(
                 websiteDuration: engine.websiteDuration,
                 pdfDuration: engine.pdfDuration,
-                topApps: engine.rankingEntries,
-                totalDuration: engine.rangeTotalDuration,
+                topApps: engine.topStudyApps,
+                totalDuration: engine.studyDuration,
                 appear: appearAnimate
             )
         case 5:
@@ -248,8 +256,10 @@ struct AnnualReportView: View {
         
         // 3. 执行年度数据抓取并清洗，限制范围为 .year。
         engine.refreshBaseData(for: .year, modelContext: modelContext, whitelist: WhitelistManager.shared)
-        
-        // 4. 异步计算今年所有时间、排名、时段分布等指标。
+    }
+
+    private func calculateYearlyMetrics() {
+        // 1. 基于已完成读取的全年日志，异步计算时长、排名和时段分布。
         engine.applyFilters(
             searchText: "",
             contentFilter: .all,
@@ -258,13 +268,13 @@ struct AnnualReportView: View {
             dimension: .app,
             range: .year
         )
-        
-        // 5. 延迟 0.6 秒关闭加载状态以等待底层计算结果就绪，触发开场动画。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            self.isLoading = false
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                self.appearAnimate = true
-            }
+    }
+
+    private func finishLoadingYearlyReport() {
+        // 1. 关闭加载状态并在完整统计结果就绪后触发开场动画。
+        isLoading = false
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+            appearAnimate = true
         }
     }
     

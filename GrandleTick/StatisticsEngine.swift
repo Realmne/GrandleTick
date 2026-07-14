@@ -908,6 +908,7 @@ struct FilterComputationResult: Sendable {
     // 常用项目排行
     let topWebsites: [RankingEntry]
     let topPDFs: [RankingEntry]
+    let topStudyApps: [RankingEntry]
 
     // 合并自报告的数据指标
     let studyDuration: TimeInterval
@@ -958,6 +959,7 @@ final class StatisticsEngine {
     // 常用项目排行缓存
     var topWebsites: [RankingEntry] = []
     var topPDFs: [RankingEntry] = []
+    var topStudyApps: [RankingEntry] = []
 
     // 合并后的报告扩展统计量
     var studyDuration: TimeInterval = 0
@@ -976,6 +978,7 @@ final class StatisticsEngine {
     var comparison: ReportComparison?
     var hourlyDurations: [Double] = Array(repeating: 0.0, count: 24)
     var baseDataGeneration: UInt = 0
+    var filterComputationGeneration: UInt = 0
     var isLoadingBaseData = false
 
     private var baseDataLoadingTask: Task<Void, Never>?
@@ -1125,9 +1128,10 @@ final class StatisticsEngine {
             // 11. 与上一周期进行同比数据比较。
             let comparison = Self.buildComparison(currentLogs: currentStudyLogs, previousLogs: previousStudyLogs)
 
-            // 12. 提取全周期前三名常用网站和常用 PDF。
+            // 12. 排行榜必须从学习日志中单独计算，避免娱乐应用被展示在“学习来源”中。
             let topWebsites = Self.rankingEntries(for: currentStudyLogs.filter(\.isWebsite), dimension: .domain).prefix(3).map { $0 }
             let topPDFs = Self.rankingEntries(for: currentStudyLogs.filter(\.isPDF), dimension: .item).prefix(3).map { $0 }
+            let topStudyApps = Self.rankingEntries(for: currentStudyLogs, dimension: .app).prefix(3).map { $0 }
 
             let result = FilterComputationResult(
                 filteredLogs: newFilteredLogs,
@@ -1143,6 +1147,7 @@ final class StatisticsEngine {
                 selectedDayPdfSummaries: Self.pdfSummaries(for: selectedLogs),
                 topWebsites: topWebsites,
                 topPDFs: topPDFs,
+                topStudyApps: topStudyApps,
                 studyDuration: studyDuration,
                 entertainmentDuration: entertainmentDuration,
                 activeDays: activeDays,
@@ -1176,6 +1181,7 @@ final class StatisticsEngine {
                 self.selectedDayPdfSummaries = result.selectedDayPdfSummaries
                 self.topWebsites = result.topWebsites
                 self.topPDFs = result.topPDFs
+                self.topStudyApps = result.topStudyApps
 
                 // 更新合并生成的报告分析指标
                 self.studyDuration = result.studyDuration
@@ -1192,6 +1198,9 @@ final class StatisticsEngine {
                 self.latestStudyEnd = result.latestStudyEnd
                 self.comparison = result.comparison
                 self.hourlyDurations = result.hourlyDurations
+
+                // 所有统计字段落地后再递增版本，让年度报告不会在半成品状态下结束加载。
+                self.filterComputationGeneration &+= 1
 
                 // 根据是否有上周期数据更新翻页按钮的可用状态
                 self.updatePaginationState(range: range, now: now)
