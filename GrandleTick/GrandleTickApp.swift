@@ -139,13 +139,21 @@ final class StatusBarController: NSObject {
             object: nil
         )
 
-        // 2. 安装本地事件监听，处理弹出框外的点击。
+        // 2. 独立功能窗口打开前主动收起菜单栏弹层，避免弹层覆盖新窗口内容。
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleFeatureWindowWillOpen),
+            name: .featureWindowWillOpen,
+            object: nil
+        )
+
+        // 3. 安装本地事件监听，处理弹出框外的点击。
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             self?.closePopoverIfNeeded(for: event)
             return event
         }
 
-        // 3. 安装全局事件监听，确保在其它应用点击时也能关闭。
+        // 4. 安装全局事件监听，确保在其它应用点击时也能关闭。
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             self?.closePopover()
         }
@@ -165,6 +173,11 @@ final class StatusBarController: NSObject {
 
     @objc
     private func handleApplicationDidResignActive() {
+        closePopover()
+    }
+
+    @objc
+    private func handleFeatureWindowWillOpen() {
         closePopover()
     }
 

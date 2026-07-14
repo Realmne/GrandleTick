@@ -5,9 +5,6 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     var usageManager: UsageManager
     
-    static var statisticsWindow: NSWindow?
-    static var whitelistWindow: NSWindow?
-    
     private let requiredConfirmText = "我已知晓"
     
     private var isUntracked: Bool {
@@ -220,71 +217,11 @@ struct ContentView: View {
     }
     
     func openWhitelistWindow() {
-        if let existingWindow = ContentView.whitelistWindow {
-            existingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 720),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        
-        window.title = "白名单"
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.contentView = NSHostingView(rootView: WhitelistView())
-        
-        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak window] _ in
-            window?.close()
-        }
-        
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-            if ContentView.whitelistWindow === window {
-                ContentView.whitelistWindow = nil
-            }
-        }
-        
-        ContentView.whitelistWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        FeatureWindowCoordinator.shared.openWhitelistWindow(modelContext: modelContext)
     }
     
     func openStatisticsWindow() {
-        if let existingWindow = ContentView.statisticsWindow {
-            existingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        
-        let statisticsWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: AppConfig.statisticsWidth, height: AppConfig.statisticsHeight),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        
-        statisticsWindow.title = "数据统计中心"
-        statisticsWindow.center()
-        statisticsWindow.isReleasedWhenClosed = false
-        statisticsWindow.titlebarAppearsTransparent = false
-        statisticsWindow.titleVisibility = .hidden
-        statisticsWindow.contentView = NSHostingView(rootView: StatisticsView().modelContext(modelContext))
-        
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: statisticsWindow, queue: .main) { _ in
-            if ContentView.statisticsWindow === statisticsWindow {
-                ContentView.statisticsWindow = nil
-            }
-        }
-        
-        ContentView.statisticsWindow = statisticsWindow
-        statisticsWindow.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        FeatureWindowCoordinator.shared.openStatisticsWindow(modelContext: modelContext)
     }
     
     private func showResetConfirmation() {
