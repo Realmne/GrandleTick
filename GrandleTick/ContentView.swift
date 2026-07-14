@@ -146,8 +146,8 @@ struct ContentView: View {
             .padding(16)
             .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.primary.opacity(0.05))
+                RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius)
+                    .fill(AppDesign.panelBackground)
             )
             
             VStack(alignment: .center, spacing: 8) {
@@ -172,29 +172,29 @@ struct ContentView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .center)
             .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.primary.opacity(0.035))
+                RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius)
+                    .fill(AppDesign.elevatedPanelBackground)
             )
             
             VStack(spacing: 10) {
                 ActionCapsuleButton(
                     title: "管理白名单",
                     systemImage: "checklist",
-                    tint: .blue,
+                    tint: AppDesign.primaryBlue,
                     action: openWhitelistWindow
                 )
 
                 ActionCapsuleButton(
                     title: "查看统计数据",
                     systemImage: "chart.pie.fill",
-                    tint: .blue,
+                    tint: AppDesign.primaryBlue,
                     action: openStatisticsWindow
                 )
 
                 ActionCapsuleButton(
                     title: "清空所有历史数据",
                     systemImage: "trash.fill",
-                    tint: .red.opacity(0.8),
+                    tint: AppDesign.destructiveRed,
                     action: showResetConfirmation
                 )
                 
@@ -203,7 +203,7 @@ struct ContentView: View {
                 ActionCapsuleButton(
                     title: "退出 GrandleTick",
                     systemImage: "power",
-                    tint: .secondary,
+                    tint: AppDesign.secondaryText,
                     action: {
                         // 1. 退出前强制持久化当前活动 Session，确保退出时的数据能够写入 SQLite 数据库。
                         usageManager.flushPendingSession()
@@ -361,7 +361,7 @@ private struct ActionCapsuleButton: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius)
                     .fill(tint.opacity(0.08))
             )
         }

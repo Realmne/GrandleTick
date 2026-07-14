@@ -7,21 +7,22 @@ import Charts
 struct AnnualReportView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     // 用于内部悬浮卡片模式的自定义关闭回调
     var dismissAction: (() -> Void)? = nil
     
     // 1. 年度报告跟随主应用的浅色信息卡风格，避免暗色报告与统计页整体视觉割裂。
-    static let studyColor = Color(red: 0.12, green: 0.44, blue: 0.82)
-    static let entertainmentColor = Color(red: 0.80, green: 0.32, blue: 0.58)
-    static let websiteColor = Color(red: 0.06, green: 0.56, blue: 0.48)
-    static let pdfColor = Color(red: 0.84, green: 0.45, blue: 0.12)
-    static let primaryText = Color(red: 0.12, green: 0.14, blue: 0.18)
-    static let secondaryText = Color(red: 0.36, green: 0.40, blue: 0.48)
-    static let tertiaryText = Color(red: 0.56, green: 0.60, blue: 0.68)
-    static let cardFill = Color.white.opacity(0.82)
-    static let softFill = Color(red: 0.95, green: 0.97, blue: 0.99)
-    static let borderColor = Color.black.opacity(0.08)
+    static let studyColor = AppDesign.primaryBlue
+    static let entertainmentColor = AppDesign.tertiaryText.opacity(0.55)
+    static let websiteColor = AppDesign.primaryBlue.opacity(0.68)
+    static let pdfColor = AppDesign.primaryBlue.opacity(0.42)
+    static let primaryText = AppDesign.primaryText
+    static let secondaryText = AppDesign.secondaryText
+    static let tertiaryText = AppDesign.tertiaryText
+    static let cardFill = AppDesign.panelBackground
+    static let softFill = AppDesign.elevatedPanelBackground
+    static let borderColor = Color.primary.opacity(0.05)
     
     @State private var engine = StatisticsEngine()
     @State private var currentPage = 0
@@ -50,7 +51,7 @@ struct AnnualReportView: View {
                         .stroke(AnnualReportView.borderColor, lineWidth: 1)
                 )
             )
-            .shadow(color: Color.black.opacity(0.16), radius: 24, x: 0, y: 14)
+            .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 5)
             
             // 3. 右上角浮动关闭按钮。
             VStack {
@@ -230,7 +231,7 @@ struct AnnualReportView: View {
                     Circle()
                         .fill(index == currentPage ? AnnualReportView.studyColor : AnnualReportView.borderColor)
                         .frame(width: index == currentPage ? 8 : 6, height: index == currentPage ? 8 : 6)
-                        .animation(.spring(response: 0.3), value: currentPage)
+                        .animation(reduceMotion ? nil : AppDesign.animationCurve, value: currentPage)
                 }
             }
             
@@ -273,7 +274,7 @@ struct AnnualReportView: View {
     private func finishLoadingYearlyReport() {
         // 1. 关闭加载状态并在完整统计结果就绪后触发开场动画。
         isLoading = false
-        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+        withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
             appearAnimate = true
         }
     }
@@ -288,7 +289,7 @@ struct AnnualReportView: View {
         currentPage = index
         
         // 3. 使用 Spring 弹性阻尼动画激活新卡片内的动效。
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
+        withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
             appearAnimate = true
         }
     }
@@ -507,7 +508,7 @@ private struct FocusRatioCard: View {
                         .cornerRadius(6)
                     }
                     .frame(height: 12)
-                    .animation(.spring(response: 0.8, dampingFraction: 0.75), value: appear)
+                    .animation(AppDesign.animationCurve, value: appear)
                     
                     HStack {
                         Text(String(format: "学习占比 %.0f%%", studyRatio * 100))
@@ -1160,56 +1161,10 @@ private struct AnnualReportNavButton: View {
     }
 }
 
-// Frosted Glass Effect View
-struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-    
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-    
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
-
-// Light Report Background View
+// 年度报告与主菜单共用背景，不再叠加纸张纹理或彩色渐变。
 struct LightReportBackground: View {
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.99, green: 0.98, blue: 0.95),
-                    Color(red: 0.94, green: 0.97, blue: 1.00),
-                    Color(red: 0.98, green: 0.96, blue: 0.99)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            
-            // 1. 用低透明度斜向纹理增强纸面层次，避免浅色报告显得单薄，同时不抢占统计内容的视觉权重。
-            VStack(spacing: 18) {
-                ForEach(0..<18, id: \.self) { _ in
-                    Rectangle()
-                        .fill(Color.white.opacity(0.20))
-                        .frame(height: 1)
-                }
-            }
-            .rotationEffect(.degrees(-18))
-            .scaleEffect(1.35)
-            
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.58), Color.white.opacity(0.18)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
+            .fill(AppDesign.appBackground)
     }
 }

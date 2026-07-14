@@ -6,7 +6,7 @@ import Charts
 
 struct StatisticsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var engine = StatisticsEngine()
     @State private var whitelist = WhitelistManager.shared
@@ -18,6 +18,7 @@ struct StatisticsView: View {
     @State private var selectedDomainFilter: String?
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showAnnualReport = false
+    @State private var contentVisible = false
 
     private let calendar = Calendar.current
 
@@ -25,8 +26,8 @@ struct StatisticsView: View {
         let hasBaseRangeData = !engine.baseRangeLogs.isEmpty
 
         ZStack {
-            // 1. 采用类似报告的精美温暖渐变背景色。
-            backgroundGradient
+            // 1. 数据中心直接延展主菜单的系统浅灰底色，不再制造独立 Dashboard 渐变。
+            AppDesign.appBackground.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 // 2. 顶部浮动毛玻璃控制栏，包含时间范围选项与翻页逻辑。
@@ -36,7 +37,7 @@ struct StatisticsView: View {
                     emptyStateView
                 } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
                             // 3. 统计核心卡片组，提供总时长、活跃天数等核心指标。
                             overviewCardsGrid
 
@@ -76,8 +77,8 @@ struct StatisticsView: View {
 
                             // 7. App 学习时长分布，提供 App 占比环形图及前三排行。
                             AppFocusDonutCard(
-                                topApps: engine.rankingEntries,
-                                totalDuration: engine.rangeTotalDuration,
+                                topApps: engine.topStudyApps,
+                                totalDuration: engine.studyDuration,
                                 formatDuration: formatCompactDuration
                             )
 
@@ -148,6 +149,8 @@ struct StatisticsView: View {
                         .padding(.horizontal, 24)
                         .padding(.top, 16)
                         .padding(.bottom, 32)
+                        .opacity(contentVisible ? 1 : 0)
+                        .offset(y: reduceMotion || contentVisible ? 0 : 6)
                     }
                 }
             }
@@ -159,37 +162,59 @@ struct StatisticsView: View {
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .onTapGesture {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
                             showAnnualReport = false
                         }
                     }
                 
                 // 年度报告卡片
                 AnnualReportView(dismissAction: {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                    withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
                         showAnnualReport = false
                     }
                 })
                 .modelContext(modelContext)
-                .transition(.asymmetric(
-                    insertion: .scale(scale: 0.92).combined(with: .opacity),
-                    removal: .scale(scale: 0.95).combined(with: .opacity)
-                ))
+                .transition(.opacity)
                 .zIndex(100)
             }
         }
         .frame(width: AppConfig.statisticsWidth, height: AppConfig.statisticsHeight)
         .ignoresSafeArea(.all, edges: .top)
-        .onAppear { refreshRangeData() }
+        .onAppear {
+            // 1. 先启动数据读取。
+            refreshRangeData()
+
+            // 2. 页面只做轻微上移淡入；减少动态效果开启时直接显示。
+            if reduceMotion {
+                contentVisible = true
+            } else {
+                withAnimation(AppDesign.animationCurve) {
+                    contentVisible = true
+                }
+            }
+        }
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
             refreshRangeData()
         }
         .onChange(of: whitelist.whitelistedApps) { _, _ in refreshRangeData() }
         .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshRangeData() }
-        .onChange(of: selectedRange) { _, _ in refreshRangeData() }
+        .onChange(of: selectedRange) { _, _ in
+            // 切换周期时先轻微淡出旧内容，新统计回写后再淡入。
+            if !reduceMotion {
+                withAnimation(AppDesign.animationCurve) {
+                    contentVisible = false
+                }
+            }
+            refreshRangeData()
+        }
         .onChange(of: engine.baseDataGeneration) { _, _ in
             sanitizeFilterSelection()
             refreshFiltersOnly()
+        }
+        .onChange(of: engine.filterComputationGeneration) { _, _ in
+            withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
+                contentVisible = true
+            }
         }
         .onChange(of: selectedDimension) { _, _ in engine.updateRanking(for: selectedDimension) }
         .onChange(of: searchText) { _, _ in scheduleSearchRefresh() }
@@ -203,33 +228,6 @@ struct StatisticsView: View {
 
     // MARK: - Subviews
 
-    private var backgroundGradient: some View {
-        Group {
-            if colorScheme == .dark {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.08, green: 0.08, blue: 0.12),
-                        Color(red: 0.05, green: 0.05, blue: 0.08),
-                        Color(red: 0.10, green: 0.06, blue: 0.12)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.97, green: 0.96, blue: 0.92),
-                        Color(red: 0.93, green: 0.96, blue: 0.98),
-                        Color(red: 0.98, green: 0.95, blue: 0.94)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-        }
-        .ignoresSafeArea()
-    }
-
     @ViewBuilder
     private func headerSection(totalDuration: TimeInterval) -> some View {
         VStack(spacing: 12) {
@@ -238,10 +236,10 @@ struct StatisticsView: View {
                     HStack(spacing: 8) {
                         Text("数据中心")
                             .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(.primary.opacity(0.88))
+                            .foregroundColor(AppDesign.primaryText)
                         
                         Button(action: {
-                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                            withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
                                 showAnnualReport = true
                             }
                         }) {
@@ -249,16 +247,9 @@ struct StatisticsView: View {
                                 Image(systemName: "sparkles")
                                 Text("年度报告")
                             }
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.white)
-                            .padding(.vertical, 3)
-                            .padding(.horizontal, 8)
-                            .background(
-                                Capsule()
-                                    .fill(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
-                            )
+                            .frame(minWidth: 82)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AppCapsuleButtonStyle(role: .primary, compact: true))
                     }
                     Text("查看学习与活动统计")
                         .font(.caption)
@@ -294,66 +285,55 @@ struct StatisticsView: View {
                 }
             }
 
-            Picker("时间范围", selection: $selectedRange) {
+            HStack(spacing: 8) {
                 ForEach(StatisticsRange.allCases) { range in
-                    Text(range.shortTitle).tag(range)
+                    Button(range.shortTitle) {
+                        selectedRange = range
+                    }
+                    .buttonStyle(AppCapsuleButtonStyle(
+                        role: selectedRange == range ? .primary : .secondary,
+                        compact: true
+                    ))
                 }
             }
-            .pickerStyle(.segmented)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 24)
-        .padding(.top, 28)
-        .padding(.bottom, 14)
-        .background(Material.regular)
-        .overlay(Divider(), alignment: .bottom)
+        .padding(.top, 24)
+        .padding(.bottom, 10)
     }
 
     @ViewBuilder
     private var overviewCardsGrid: some View {
-        // 布局设计：3列 x 2行
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            OverviewCard(
-                title: "总学习时长",
-                value: formatDetailedDuration(engine.studyDuration),
-                subtitle: selectedRange.title,
-                tint: .blue
-            )
+        VStack(alignment: .leading, spacing: 14) {
+            AppSectionHeader(title: "本期学习概览", subtitle: selectedRange.title, compact: true)
 
-            OverviewCard(
-                title: "今日学习时长",
-                value: formatCompactDuration(engine.todayDuration),
-                subtitle: "今天",
-                tint: .orange
-            )
+            HStack(alignment: .center, spacing: 22) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("总学习时长")
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                    AppStatValue(value: formatDetailedDuration(engine.studyDuration))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            OverviewCard(
-                title: "活跃天数",
-                value: "\(engine.activeDays) 天",
-                subtitle: "有记录的天数",
-                tint: .green
-            )
+                Rectangle()
+                    .fill(Color.primary.opacity(0.07))
+                    .frame(width: 1, height: 62)
 
-            OverviewCard(
-                title: "日均学习时长",
-                value: formatCompactDuration(engine.averageDailyDuration),
-                subtitle: "单日均值",
-                tint: .indigo
-            )
-
-            OverviewCard(
-                title: "最长连续天数",
-                value: "\(engine.longestStreak) 天",
-                subtitle: "连续学习记录",
-                tint: .purple
-            )
-
-            OverviewCard(
-                title: "与上期对比",
-                value: formatComparisonValue(engine.comparison),
-                subtitle: formatComparisonSubtitle(engine.comparison, range: selectedRange),
-                tint: .pink
-            )
+                HStack(spacing: 24) {
+                    OverviewMetric(title: "日均学习", value: formatCompactDuration(engine.averageDailyDuration))
+                    OverviewMetric(title: "活跃天数", value: "\(engine.activeDays) 天")
+                    OverviewMetric(title: "最长连续", value: "\(engine.longestStreak) 天")
+                    OverviewMetric(
+                        title: "与上期对比",
+                        value: formatComparisonValue(engine.comparison),
+                        subtitle: formatComparisonSubtitle(engine.comparison, range: selectedRange)
+                    )
+                }
+            }
         }
+        .appPanel(.regular)
     }
 
     private var emptyStateView: some View {
@@ -528,33 +508,27 @@ struct StatisticsView: View {
 
 // MARK: - Supporting Subviews & Components
 
-private struct OverviewCard: View {
-    @Environment(\.colorScheme) private var colorScheme
+private struct OverviewMetric: View {
     let title: String
     let value: String
-    let subtitle: String
-    let tint: Color
+    var subtitle: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: "circle.fill")
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
                 .font(.caption)
-                .foregroundColor(.secondary)
-                .labelStyle(.titleAndIcon)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(tint)
+                .foregroundColor(AppDesign.secondaryText)
 
-            Text(value)
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundColor(.primary)
+            AppStatValue(value: value, compact: true, emphasized: false)
 
-            Text(subtitle)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 9))
+                    .foregroundColor(AppDesign.tertiaryText)
+                    .lineLimit(1)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .premiumCard(cornerRadius: 18)
+        .frame(minWidth: 96, alignment: .leading)
     }
 }
 
@@ -587,14 +561,25 @@ private struct FilterSection: View {
             }
 
             TextField("搜索应用、域名、标题或链接", text: $searchText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .frame(height: AppDesign.controlHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                        .fill(AppDesign.elevatedPanelBackground)
+                )
 
-            Picker("内容类型", selection: $selectedContentFilter) {
+            HStack(spacing: 8) {
                 ForEach(ContentFilter.allCases) { filter in
-                    Text(filter == .all ? "全部" : filter == .website ? "网页" : "PDF").tag(filter)
+                    Button(filter == .all ? "全部" : filter == .website ? "网页" : "PDF") {
+                        selectedContentFilter = filter
+                    }
+                    .buttonStyle(AppCapsuleButtonStyle(
+                        role: selectedContentFilter == filter ? .primary : .secondary,
+                        compact: true
+                    ))
                 }
             }
-            .pickerStyle(.segmented)
 
             HStack(spacing: 12) {
                 Menu {
@@ -632,8 +617,8 @@ private struct FilterSection: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(18)
-        .premiumCard(cornerRadius: 22, isSecondary: true)
+        .padding(16)
+        .statisticsPanel(isSecondary: true)
     }
 
     private var hasActiveFilters: Bool {
@@ -652,8 +637,10 @@ private struct FilterChip: View {
             Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundColor(.secondary)
         }
         .padding(.vertical, 8).padding(.horizontal, 10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.8)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.05), lineWidth: 0.8))
+        .background(
+            RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                .fill(AppDesign.elevatedPanelBackground)
+        )
     }
 }
 
@@ -695,7 +682,7 @@ private struct RangeTrendSection: View {
             }
         }
         .padding(18)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
         .onAppear { highlightedDay = selectedDay }
         .onChange(of: selectedDay) { _, newValue in commitTask?.cancel(); if !isSameDay(highlightedDay, newValue) { highlightedDay = newValue } }
     }
@@ -727,7 +714,7 @@ private struct RangeTrendSection: View {
     private func barGradient(for date: Date, colorScheme: ColorScheme) -> LinearGradient {
         if isHighlighted(date) {
             return LinearGradient(
-                colors: [Color(red: 0.25, green: 0.65, blue: 1.0), Color(red: 0.65, green: 0.45, blue: 0.95)],
+                colors: [AppDesign.primaryBlue, AppDesign.primaryBlue.opacity(0.62)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -760,8 +747,10 @@ private struct DayPickerSection: View {
                                 Text(formatDuration(daySummary.totalTime)).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
                             }
                             .padding(.vertical, 8).padding(.horizontal, 10)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(isSelected(daySummary.date) ? Color.blue.opacity(0.18) : Color.white.opacity(0.6)))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSelected(daySummary.date) ? Color.blue.opacity(0.3) : Color.black.opacity(0.04), lineWidth: 1))
+                            .background(
+                                RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                                    .fill(isSelected(daySummary.date) ? AppDesign.primaryBlueMuted : AppDesign.elevatedPanelBackground)
+                            )
                         }.buttonStyle(.plain)
                     }
                 }
@@ -779,12 +768,17 @@ private struct RankingSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("学习时长排行").font(.headline)
-            Picker("排行维度", selection: $selectedDimension) {
-                Text("应用").tag(RankingDimension.app)
-                Text("域名").tag(RankingDimension.domain)
-                Text("窗口").tag(RankingDimension.item)
+            HStack(spacing: 8) {
+                ForEach(RankingDimension.allCases) { dimension in
+                    Button(dimension == .app ? "应用" : dimension == .domain ? "域名" : "窗口") {
+                        selectedDimension = dimension
+                    }
+                    .buttonStyle(AppCapsuleButtonStyle(
+                        role: selectedDimension == dimension ? .primary : .secondary,
+                        compact: true
+                    ))
+                }
             }
-            .pickerStyle(.segmented)
 
             if rankingEntries.isEmpty {
                 Text("无数据").font(.caption).foregroundColor(.secondary).padding(.top, 4)
@@ -816,7 +810,7 @@ private struct RankingSection: View {
             }
         }
         .padding(18)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
     }
 }
 
@@ -853,7 +847,7 @@ private struct SelectedDaySection: View {
             }
         }
         .padding(18)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
     }
 }
 
@@ -869,15 +863,22 @@ private struct CategorySummaryGroup: View {
             if summaries.isEmpty {
                 Text(emptyText).font(.caption).foregroundColor(.secondary).padding(.leading, 8)
             } else {
-                ForEach(summaries) { summary in
-                    SummaryEntryCardView(summary: summary, formatDuration: formatDuration, onDelete: { onDelete(summary.name, $0) })
+                VStack(spacing: 0) {
+                    ForEach(Array(summaries.enumerated()), id: \.element.id) { index, summary in
+                        SummaryEntryRowView(summary: summary, formatDuration: formatDuration, onDelete: { onDelete(summary.name, $0) })
+                        if index < summaries.count - 1 {
+                            Divider()
+                                .opacity(0.35)
+                                .padding(.leading, 44)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-private struct SummaryEntryCardView: View {
+private struct SummaryEntryRowView: View {
     let summary: GroupedSummary
     let formatDuration: (TimeInterval) -> String
     let onDelete: (String) -> Void
@@ -916,15 +917,15 @@ private struct SummaryEntryCardView: View {
                 }
             }
         }
-        .padding(12)
-        .background(Color.white.opacity(0.5))
-        .cornerRadius(14)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
     }
 }
 
 // MARK: - Merged Custom Report Components
 
 private struct LearningVsEntertainmentDonutCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let studyDuration: TimeInterval
     let entertainmentDuration: TimeInterval
     let formatDuration: (TimeInterval) -> String
@@ -948,8 +949,8 @@ private struct LearningVsEntertainmentDonutCard: View {
 
             HStack(spacing: 16) {
                 let data = [
-                    Segment(type: "学习时间", duration: studyDuration, color: Color(red: 0.2, green: 0.6, blue: 1.0)),
-                    Segment(type: "娱乐时间", duration: entertainmentDuration, color: Color(red: 1.0, green: 0.45, blue: 0.25))
+                    Segment(type: "学习时间", duration: studyDuration, color: AppDesign.primaryBlue),
+                    Segment(type: "休闲时间", duration: entertainmentDuration, color: AppDesign.tertiaryText.opacity(0.50))
                 ].filter { $0.duration > 0 }
 
                 Chart(data) { segment in
@@ -962,7 +963,7 @@ private struct LearningVsEntertainmentDonutCard: View {
                     .foregroundStyle(segment.color)
                 }
                 .frame(width: 100, height: 100)
-                .scaleEffect(animateData ? 1.0 : 0.88)
+                .scaleEffect(reduceMotion || animateData ? 1.0 : 0.96)
                 .opacity(animateData ? 1.0 : 0.0)
                 .chartBackground { chartProxy in
                     GeometryReader { geo in
@@ -975,7 +976,7 @@ private struct LearningVsEntertainmentDonutCard: View {
                                     .foregroundColor(.secondary)
                                 Text("\(Int((studyShare * 100).rounded()))%")
                                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 1.0))
+                                    .foregroundColor(AppDesign.primaryBlue)
                             }
                             .position(x: frameWidth / 2, y: frameHeight / 2)
                         }
@@ -983,8 +984,8 @@ private struct LearningVsEntertainmentDonutCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: Color(red: 0.2, green: 0.6, blue: 1.0))
-                    ReportLegendStat(title: "休闲时间", value: formatDuration(entertainmentDuration), tint: Color(red: 1.0, green: 0.45, blue: 0.25))
+                    ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: AppDesign.primaryBlue)
+                    ReportLegendStat(title: "休闲时间", value: formatDuration(entertainmentDuration), tint: AppDesign.tertiaryText.opacity(0.50))
                 }
 
                 Spacer()
@@ -992,9 +993,9 @@ private struct LearningVsEntertainmentDonutCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
+            withAnimation(reduceMotion ? nil : AppDesign.animationCurve.delay(0.04)) {
                 animateData = true
             }
         }
@@ -1002,6 +1003,7 @@ private struct LearningVsEntertainmentDonutCard: View {
 }
 
 private struct ContentCategoryDonutCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let websiteDuration: TimeInterval
     let pdfDuration: TimeInterval
     let totalDuration: TimeInterval
@@ -1019,9 +1021,9 @@ private struct ContentCategoryDonutCard: View {
     private var categories: [Category] {
         let appDuration = max(0, totalDuration - websiteDuration - pdfDuration)
         return [
-            Category(name: "PDF 文档", duration: pdfDuration, color: Color(red: 0.68, green: 0.45, blue: 0.95)),
-            Category(name: "网页浏览", duration: websiteDuration, color: Color(red: 0.12, green: 0.72, blue: 0.72)),
-            Category(name: "应用", duration: appDuration, color: Color(red: 0.22, green: 0.58, blue: 0.95))
+            Category(name: "PDF 文档", duration: pdfDuration, color: AppDesign.primaryBlue),
+            Category(name: "网页浏览", duration: websiteDuration, color: AppDesign.primaryBlue.opacity(0.64)),
+            Category(name: "应用", duration: appDuration, color: AppDesign.primaryBlue.opacity(0.34))
         ].filter { $0.duration > 0 }
     }
 
@@ -1041,7 +1043,7 @@ private struct ContentCategoryDonutCard: View {
                     .foregroundStyle(item.color)
                 }
                 .frame(width: 100, height: 100)
-                .scaleEffect(animateData ? 1.0 : 0.88)
+                .scaleEffect(reduceMotion || animateData ? 1.0 : 0.96)
                 .opacity(animateData ? 1.0 : 0.0)
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -1068,9 +1070,9 @@ private struct ContentCategoryDonutCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.15)) {
+            withAnimation(reduceMotion ? nil : AppDesign.animationCurve.delay(0.06)) {
                 animateData = true
             }
         }
@@ -1101,7 +1103,7 @@ private struct RhythmSection: View {
                             .foregroundColor(.secondary) +
                         Text(" \(primaryTimeSlot.title) ")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.purple) +
+                            .foregroundColor(AppDesign.primaryBlue) +
                         Text("时段进入学习状态。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
@@ -1127,11 +1129,12 @@ private struct RhythmSection: View {
             }
         }
         .padding(18)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
     }
 }
 
 private struct ReportRhythmHourlyChart: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let hourlyDurations: [Double]
 
     @State private var animateData = false
@@ -1149,7 +1152,7 @@ private struct ReportRhythmHourlyChart: View {
                 )
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [Color(red: 0.68, green: 0.45, blue: 0.95).opacity(0.3), Color(red: 0.68, green: 0.45, blue: 0.95).opacity(0.01)],
+                        colors: [AppDesign.primaryBlue.opacity(0.24), AppDesign.primaryBlue.opacity(0.01)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -1161,7 +1164,7 @@ private struct ReportRhythmHourlyChart: View {
                     x: .value("时间", "\(item.hour)点"),
                     y: .value("时长", item.value)
                 )
-                .foregroundStyle(Color(red: 0.68, green: 0.45, blue: 0.95))
+                .foregroundStyle(AppDesign.primaryBlue)
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
             }
         }
@@ -1177,7 +1180,7 @@ private struct ReportRhythmHourlyChart: View {
         }
         .chartYAxis {
             AxisMarks(position: .leading) { value in
-                AxisGridLine()
+                AxisGridLine().foregroundStyle(Color.primary.opacity(0.06))
                 AxisValueLabel {
                     if let hours = value.as(Double.self) {
                         Text(hours == 0 ? "0h" : String(format: "%.1fh", hours)).font(.system(size: 9))
@@ -1186,7 +1189,7 @@ private struct ReportRhythmHourlyChart: View {
             }
         }
         .onAppear {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.80).delay(0.2)) {
+            withAnimation(reduceMotion ? nil : AppDesign.animationCurve.delay(0.08)) {
                 animateData = true
             }
         }
@@ -1212,12 +1215,15 @@ private struct ClockCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.black.opacity(0.04), lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                .fill(AppDesign.elevatedPanelBackground)
+        )
     }
 }
 
 private struct AppFocusDonutCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let topApps: [RankingEntry]
     let totalDuration: TimeInterval
     let formatDuration: (TimeInterval) -> String
@@ -1225,10 +1231,10 @@ private struct AppFocusDonutCard: View {
     @State private var animateData = false
 
     private let palette: [Color] = [
-        Color(red: 0.22, green: 0.58, blue: 0.95), // Vibrant Blue
-        Color(red: 0.68, green: 0.45, blue: 0.95), // Vibrant Purple
-        Color(red: 0.12, green: 0.72, blue: 0.72), // Vibrant Teal
-        Color(red: 1.00, green: 0.45, blue: 0.35)  // Vibrant Coral Pink
+        AppDesign.primaryBlue,
+        AppDesign.primaryBlue.opacity(0.72),
+        AppDesign.primaryBlue.opacity(0.48),
+        AppDesign.primaryBlue.opacity(0.28)
     ]
 
     struct Segment: Identifiable {
@@ -1272,7 +1278,7 @@ private struct AppFocusDonutCard: View {
                     .foregroundStyle(segment.color)
                 }
                 .frame(width: 100, height: 100)
-                .scaleEffect(animateData ? 1.0 : 0.88)
+                .scaleEffect(reduceMotion || animateData ? 1.0 : 0.96)
                 .opacity(animateData ? 1.0 : 0.0)
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -1300,9 +1306,9 @@ private struct AppFocusDonutCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.80).delay(0.2)) {
+            withAnimation(reduceMotion ? nil : AppDesign.animationCurve.delay(0.10)) {
                 animateData = true
             }
         }
@@ -1366,7 +1372,7 @@ private struct ReportRankingPanel: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .premiumCard(cornerRadius: 22)
+        .statisticsPanel()
     }
 }
 
@@ -1394,122 +1400,54 @@ private struct ReportLegendStat: View {
 }
 
 private struct ReportPagerButton: View {
-    @Environment(\.colorScheme) private var colorScheme
     let systemImage: String
     let isDisabled: Bool
     let action: () -> Void
 
     @State private var isHovered = false
-    @State private var isPressed = false
-
-    // 1. 获取根据主题与交互状态动态计算的背景填充色，避免嵌套三元运算符导致编译器超时。
-    private var buttonBgColor: Color {
-        if colorScheme == .dark {
-            if isDisabled {
-                return Color.black.opacity(0.2)
-            } else if isPressed {
-                return Color.white.opacity(0.2)
-            } else if isHovered {
-                return Color.white.opacity(0.15)
-            } else {
-                return Color.white.opacity(0.08)
-            }
-        } else {
-            if isDisabled {
-                return Color.white.opacity(0.34)
-            } else if isPressed {
-                return Color.white.opacity(0.96)
-            } else if isHovered {
-                return Color.white.opacity(0.90)
-            } else {
-                return Color.white.opacity(0.72)
-            }
-        }
-    }
-
-    // 2. 获取对应的边框颜色，防止暗色模式下过度刺眼，实现柔和边框。
-    private var buttonBorderColor: Color {
-        if colorScheme == .dark {
-            return isDisabled ? Color.white.opacity(0.02) : Color.white.opacity(0.08)
-        } else {
-            return isDisabled ? Color.black.opacity(0.04) : Color.black.opacity(isHovered ? 0.10 : 0.07)
-        }
-    }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.primary.opacity(isDisabled ? 0.38 : 0.86))
-                .frame(width: 28, height: 28)
+                .foregroundColor(AppDesign.primaryBlue.opacity(isDisabled ? 0.34 : 1))
+                .frame(width: 30, height: 30)
                 .background(
-                    Circle()
-                        .fill(buttonBgColor)
+                    RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                        .fill(isHovered ? AppDesign.primaryBlue.opacity(0.13) : AppDesign.primaryBlueMuted)
                 )
-                .overlay(
-                    Circle()
-                        .stroke(buttonBorderColor, lineWidth: 0.8)
-                )
-                .scaleEffect(isPressed && !isDisabled ? 0.96 : 1)
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .onHover { hovering in
             if !isDisabled {
-                withAnimation(.easeOut(duration: 0.12)) {
+                withAnimation(AppDesign.animationCurve) {
                     isHovered = hovering
                 }
             }
         }
-        .pressing { pressing in
-            if !isDisabled {
-                withAnimation(.easeOut(duration: 0.08)) {
-                    isPressed = pressing
-                }
-            }
-        }
     }
 }
 
-private struct PressObserverStyle: ButtonStyle {
-    let onPress: (Bool) -> Void
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.onChange(of: configuration.isPressed) { _, isPressed in
-            onPress(isPressed)
-        }
-    }
-}
+// MARK: - Shared Statistics Panel Styling
 
-// MARK: - Premium Card Styling Extension
-
-struct PremiumCardBackground: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-    var cornerRadius: CGFloat = 22
+struct StatisticsPanelBackground: ViewModifier {
     var isSecondary: Bool = false
 
     func body(content: Content) -> some View {
+        let resolvedRadius = isSecondary ? AppDesign.mediumCornerRadius : AppDesign.largeCornerRadius
+
         content
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(colorScheme == .dark ?
-                          Color.black.opacity(isSecondary ? 0.25 : 0.45) :
-                          Color.white.opacity(isSecondary ? 0.6 : 0.78))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(colorScheme == .dark ?
-                            Color.white.opacity(isSecondary ? 0.05 : 0.08) :
-                            Color.white.opacity(isSecondary ? 0.5 : 0.72), lineWidth: 1)
+                // 宽屏面板与主菜单共用填充与圆角，不再使用白色悬浮卡片和描边。
+                RoundedRectangle(cornerRadius: resolvedRadius, style: .continuous)
+                    .fill(isSecondary ? AppDesign.elevatedPanelBackground : AppDesign.panelBackground)
             )
     }
 }
 
 extension View {
-    fileprivate func pressing(_ onPress: @escaping (Bool) -> Void) -> some View {
-        buttonStyle(PressObserverStyle(onPress: onPress))
-    }
-    
-    fileprivate func premiumCard(cornerRadius: CGFloat = 22, isSecondary: Bool = false) -> some View {
-        self.modifier(PremiumCardBackground(cornerRadius: cornerRadius, isSecondary: isSecondary))
+    fileprivate func statisticsPanel(isSecondary: Bool = false) -> some View {
+        self.modifier(StatisticsPanelBackground(isSecondary: isSecondary))
     }
 }

@@ -40,7 +40,7 @@ struct WhitelistView: View {
                         title: "应用",
                         subtitle: "统计这些应用",
                         symbolName: "app.connected.to.app.below.fill",
-                        tint: .blue,
+                        tint: AppDesign.primaryBlue,
                         totalCount: whitelistManager.whitelistedApps.count,
                         defaultTitle: "默认",
                         defaultItems: defaultApps,
@@ -54,7 +54,7 @@ struct WhitelistView: View {
                         title: "域名",
                         subtitle: "统计这些域名",
                         symbolName: "globe.europe.africa.fill",
-                        tint: .teal,
+                        tint: AppDesign.primaryBlue,
                         totalCount: whitelistManager.whitelistedDomains.count,
                         defaultTitle: "默认",
                         defaultItems: defaultDomains,
@@ -68,7 +68,7 @@ struct WhitelistView: View {
                 }
                 .padding(24)
             }
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(AppDesign.appBackground)
         }
         .frame(minWidth: 520, minHeight: 660)
         .ignoresSafeArea(.all, edges: .top)
@@ -88,8 +88,6 @@ struct WhitelistView: View {
         .padding(.horizontal, 24)
         .padding(.top, 28)
         .padding(.bottom, 18)
-        .background(Material.regular)
-        .overlay(Divider(), alignment: .bottom)
     }
 
     private var overviewSection: some View {
@@ -99,7 +97,7 @@ struct WhitelistView: View {
                 value: "\(whitelistManager.whitelistedApps.count)",
                 detail: "自定义 \(customApps.count) 项",
                 symbolName: "macwindow.on.rectangle",
-                tint: .blue
+                tint: AppDesign.primaryBlue
             )
 
             WhitelistCountCard(
@@ -107,7 +105,7 @@ struct WhitelistView: View {
                 value: "\(whitelistManager.whitelistedDomains.count)",
                 detail: "自定义 \(customDomains.count) 项",
                 symbolName: "network",
-                tint: .teal
+                tint: AppDesign.primaryBlue
             )
         }
     }
@@ -118,13 +116,13 @@ struct WhitelistView: View {
                 Label("添加应用", systemImage: "plus.app.fill")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(PrimaryActionButtonStyle(tint: .blue))
+            .buttonStyle(AppCapsuleButtonStyle(role: .primary))
 
             Button(action: addDomainManually) {
                 Label("添加域名", systemImage: "plus.circle.fill")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(PrimaryActionButtonStyle(tint: .teal))
+            .buttonStyle(AppCapsuleButtonStyle(role: .primary))
         }
     }
 
@@ -141,8 +139,8 @@ struct WhitelistView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.primary.opacity(0.04))
+            RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
+                .fill(AppDesign.elevatedPanelBackground)
         )
     }
 
@@ -200,7 +198,7 @@ private struct WhitelistCategoryCard: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
                         .fill(tint.opacity(0.14))
                         .frame(width: 46, height: 46)
 
@@ -238,15 +236,15 @@ private struct WhitelistCategoryCard: View {
                 title: customTitle,
                 items: customItems,
                 badgeText: "自定义",
-                badgeTint: .orange,
+                badgeTint: AppDesign.primaryBlue.opacity(0.68),
                 emptyText: emptyText,
                 onDelete: onDelete
             )
         }
-        .padding(20)
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 22)
-                .fill(Color.primary.opacity(0.045))
+            RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
+                .fill(AppDesign.panelBackground)
         )
     }
 }
@@ -295,8 +293,8 @@ private struct WhitelistEntryCard: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.7))
+                RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                    .fill(AppDesign.panelBackground)
                     .frame(width: 36, height: 36)
 
                 Image(systemName: symbolName(for: name))
@@ -317,19 +315,19 @@ private struct WhitelistEntryCard: View {
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.red.opacity(0.78))
+                    .foregroundColor(AppDesign.destructiveRed)
                     .frame(width: 30, height: 30)
                     .background(
                         Circle()
-                            .fill(Color.red.opacity(0.08))
+                            .fill(AppDesign.destructiveRed.opacity(0.10))
                     )
             }
             .buttonStyle(.plain)
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.white.opacity(0.62))
+            RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                .fill(AppDesign.elevatedPanelBackground)
         )
     }
 
@@ -375,8 +373,8 @@ private struct WhitelistCountCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(tint.opacity(0.11))
+            RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
+                .fill(AppDesign.panelBackground)
         )
     }
 }
@@ -395,22 +393,5 @@ private struct WhitelistPill: View {
                 Capsule()
                     .fill(tint.opacity(0.12))
             )
-    }
-}
-
-private struct PrimaryActionButtonStyle: ButtonStyle {
-    let tint: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .semibold))
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(tint.opacity(configuration.isPressed ? 0.72 : 0.9))
-            )
-            .foregroundColor(.white)
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
     }
 }
