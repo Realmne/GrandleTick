@@ -1139,7 +1139,7 @@ final class StatisticsEngine {
                 daySummaries: newDaySummaries,
                 rangeTotalDuration: newFilteredLogs.reduce(0) { $0 + $1.duration },
                 topAppSummary: Self.topAppSummary(in: sourceLogs),
-                rankingEntries: Self.rankingEntries(for: newFilteredLogs, dimension: dimension),
+                rankingEntries: Self.rankingEntries(for: currentStudyLogs, dimension: dimension),
                 resolvedSelectedDay: resolvedDay,
                 todayDuration: todayLogs.filter { !Self.isEntertainmentLog($0) }.reduce(0) { $0 + $1.duration },
                 selectedDayAppSummaries: Self.groupedSummaries(for: selectedLogs, dimension: .app),
@@ -1210,7 +1210,10 @@ final class StatisticsEngine {
 
     /// 切换排行榜排序维度（应用 / 域名 / 网页标题）时的极速响应函数
     func updateRanking(for dimension: RankingDimension) {
-        rankingEntries = Self.rankingEntries(for: rangeLogs, dimension: dimension)
+        // rangeLogs 还承担全天活动明细的数据源，不能直接改成只保存学习日志；
+        // 排行切换时必须再次过滤，否则娱乐应用会在切换维度后重新混入学习榜。
+        let studyLogs = rangeLogs.filter { !Self.isEntertainmentLog($0) }
+        rankingEntries = Self.rankingEntries(for: studyLogs, dimension: dimension)
     }
 
     /// 用户在每日趋势图中点击选择不同日期时，快速更新详情卡片数据
