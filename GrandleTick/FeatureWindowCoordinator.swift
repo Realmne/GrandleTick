@@ -106,8 +106,14 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
 
     private func prepareForFeatureWindowPresentation() {
         NotificationCenter.default.post(name: .featureWindowWillOpen, object: nil)
-        // 应用现在始终采用 regular 策略；这里仍做兜底，确保旧进程升级后首次打开窗口就能恢复 Dock 图标。
+        // 功能窗口打开时切换为 regular，确保窗口拥有独立 Dock tile 和标准窗口行为。
         NSApp.setActivationPolicy(.regular)
+        applyDockIcon()
+
+        // Dock tile 在激活策略切换后的下一轮事件循环才可能完成重建，因此需要再次覆盖系统占位图。
+        DispatchQueue.main.async { [weak self] in
+            self?.applyDockIcon()
+        }
     }
 
     private func configure(_ window: NSWindow, title: String, titlebarAppearsTransparent: Bool) {
@@ -129,5 +135,12 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
     private func restoreMenuBarOnlyModeIfNeeded() {
         guard statisticsWindow == nil, whitelistWindow == nil else { return }
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    private func applyDockIcon() {
+        guard let iconURL = Bundle.main.url(forResource: "DockIcon", withExtension: "icns"),
+              let icon = NSImage(contentsOf: iconURL) else { return }
+        NSApp.applicationIconImage = icon
+        NSApp.dockTile.display()
     }
 }
