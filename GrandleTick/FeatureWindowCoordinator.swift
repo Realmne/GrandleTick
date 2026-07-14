@@ -98,6 +98,10 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
             whitelistWindow = nil
         }
 
+        // 2. 等关闭事件完成后再检查其它功能窗口；全部关闭时隐藏 Dock 图标，但保留菜单栏进程。
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreMenuBarOnlyModeIfNeeded()
+        }
     }
 
     private func prepareForFeatureWindowPresentation() {
@@ -122,4 +126,8 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func restoreMenuBarOnlyModeIfNeeded() {
+        guard statisticsWindow == nil, whitelistWindow == nil else { return }
+        NSApp.setActivationPolicy(.accessory)
+    }
 }

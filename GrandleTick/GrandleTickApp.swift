@@ -69,20 +69,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let usageManager, let modelContext else { return }
-        // 应用需要作为标准 Dock 应用存在，同时继续保留原有菜单栏入口。
-        NSApp.setActivationPolicy(.regular)
+        // 1. 显式加载编译后的 icns，避免菜单栏应用动态切换到 Dock 时沿用系统占位图。
+        if let iconURL = Bundle.main.url(forResource: "DockIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
+
+        // 2. 启动时保持菜单栏模式；打开独立功能窗口后再临时显示 Dock 图标。
+        NSApp.setActivationPolicy(.accessory)
         statusBarController = StatusBarController(
             usageManager: usageManager,
             modelContext: modelContext
         )
-    }
-
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Dock 图标被点击且当前没有功能窗口时，默认恢复最常用的数据中心窗口。
-        if !flag, let modelContext {
-            FeatureWindowCoordinator.shared.openStatisticsWindow(modelContext: modelContext)
-        }
-        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

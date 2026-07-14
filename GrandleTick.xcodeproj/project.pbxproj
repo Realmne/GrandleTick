@@ -250,7 +250,7 @@
 				DEVELOPMENT_TEAM = 7PDMGBAPNH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "GrandleTick 需要通过自动化控制浏览器，以提取 B站 视频的唯一标识符（BV号），从而精确合并统计同一视频的不同分集时长。";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
@@ -277,7 +277,7 @@
 				DEVELOPMENT_TEAM = 7PDMGBAPNH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "GrandleTick 需要通过自动化控制浏览器，以提取 B站 视频的唯一标识符（BV号），从而精确合并统计同一视频的不同分集时长。";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
