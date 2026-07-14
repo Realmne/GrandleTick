@@ -98,17 +98,12 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
             whitelistWindow = nil
         }
 
-        // 2. 等 AppKit 完成本轮关闭事件后再判断，避免两个窗口连续关闭时 Dock 状态发生抖动。
-        DispatchQueue.main.async { [weak self] in
-            self?.restoreMenuBarOnlyModeIfNeeded()
-        }
     }
 
     private func prepareForFeatureWindowPresentation() {
         NotificationCenter.default.post(name: .featureWindowWillOpen, object: nil)
-        if NSApp.activationPolicy() != .regular {
-            NSApp.setActivationPolicy(.regular)
-        }
+        // 应用现在始终采用 regular 策略；这里仍做兜底，确保旧进程升级后首次打开窗口就能恢复 Dock 图标。
+        NSApp.setActivationPolicy(.regular)
     }
 
     private func configure(_ window: NSWindow, title: String, titlebarAppearsTransparent: Bool) {
@@ -127,9 +122,4 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func restoreMenuBarOnlyModeIfNeeded() {
-        guard statisticsWindow == nil, whitelistWindow == nil else { return }
-        // 功能窗口全部关闭后继续保留菜单栏计时，但从 Dock 中退出，恢复应用原有的轻量驻留方式。
-        NSApp.setActivationPolicy(.accessory)
-    }
 }
