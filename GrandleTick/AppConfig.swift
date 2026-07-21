@@ -3,9 +3,10 @@ import Foundation
 enum AppConfig {
     // MARK: - Persistence
     static let persistenceInterval: TimeInterval = 60
-    static let trackInterval: TimeInterval = 2
-    static let browserURLRefreshInterval: TimeInterval = 5
-    static let trustRefreshInterval: TimeInterval = 15
+    static let trackingHeartbeatInterval: TimeInterval = 2
+    static let trackInterval: TimeInterval = 4
+    static let browserURLRefreshInterval: TimeInterval = 15
+    static let trustRefreshInterval: TimeInterval = 60
 
     // MARK: - Bilibili
     static let bilibiliKnowledgeTidV2s: Set<Int> = [1010, 2084, 2085, 2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093, 2094, 2095]

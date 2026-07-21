@@ -76,11 +76,13 @@ struct FilterCriteria: Sendable {
 struct WhitelistSnapshot: Sendable {
     let lowercasedApps: [String]
     let domains: [String]
+    let lowercasedDomainSet: Set<String>
     let domainKeywords: [(domain: String, keyword: String)]
 
     init(whitelist: WhitelistManager) {
         self.lowercasedApps = whitelist.whitelistedApps.map { $0.lowercased() }
         self.domains = whitelist.whitelistedDomains
+        self.lowercasedDomainSet = Set(whitelist.whitelistedDomains.map { $0.lowercased() })
         self.domainKeywords = whitelist.whitelistedDomains.map { domain in
             let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
             return (domain: domain, keyword: keyword)
@@ -170,7 +172,7 @@ struct PreparedLog: Identifiable, Sendable {
         let isStudy: Bool
         if isWebsite {
             let isWhitelistedDomain = resolvedDomain.flatMap { domain in
-                whitelist.domains.contains { $0.lowercased() == domain.lowercased() }
+                whitelist.lowercasedDomainSet.contains(domain.lowercased())
             } ?? false
             // B 站视频只有 bilibiliIdentifier 非空（API 确认知识区）才算学习，
             // 与实时弹窗 isStudyActive 的判断逻辑保持完全一致。
@@ -309,6 +311,11 @@ private struct AggregateCacheKey: Hashable {
     let pdfIdentifier: String?
 }
 
+private struct AggregateCacheValidationKey: Hashable {
+    let cacheVersion: String
+    let dayStart: Date
+}
+
 private struct AggregateCacheAccumulator {
     let key: AggregateCacheKey
     var duration: TimeInterval
@@ -327,6 +334,8 @@ private struct AggregateCacheAccumulator {
 /// 已结束整天的物化统计缓存。原始 ActivityLog 仍是事实源，缓存只用于统计页快速读取。
 enum ActivityAggregateCacheStore {
     private static let algorithmVersion = "aggregate-cache-v1"
+    private static let validationLock = NSLock()
+    private static var validatedDays: Set<AggregateCacheValidationKey> = []
 
     static func cacheVersion(for whitelist: WhitelistSnapshot) -> String {
         // 白名单直接影响 isStudy 分类，因此缓存版本必须绑定当前规则输入，避免修改白名单后复用旧统计。
@@ -361,6 +370,10 @@ enum ActivityAggregateCacheStore {
 
         // 2. 对已结束整天建立或刷新缓存。通过源数据指纹判断历史删除、迁移或压缩是否让缓存失效。
         for dayStart in plan.cacheableDays {
+            guard !Task.isCancelled else { return [] }
+
+            // 已结束日期在同一次 App 运行中只核验一次。删除记录会主动撤销标记，避免 60 秒刷新反复扫描全年历史。
+            guard needsValidation(cacheVersion: cacheVersion, dayStart: dayStart) else { continue }
             let fingerprint = sourceFingerprint(database: database, dayStart: dayStart, calendar: calendar)
             if cachedFingerprint(database: database, cacheVersion: cacheVersion, dayStart: dayStart) != fingerprint {
                 rebuildCache(
@@ -373,6 +386,7 @@ enum ActivityAggregateCacheStore {
                     calendar: calendar
                 )
             }
+            markValidated(cacheVersion: cacheVersion, dayStart: dayStart)
         }
 
         // 3. 从缓存读取完整历史日，并补上今天或半截边界区间的原始日志。
@@ -385,6 +399,7 @@ enum ActivityAggregateCacheStore {
         )
 
         for rawInterval in plan.rawIntervals {
+            guard !Task.isCancelled else { return [] }
             let rawLogs = ActivityLogSnapshotStore.fetchLogs(databaseURL: databaseURL, interval: rawInterval)
             preparedLogs.append(contentsOf: rawLogs.compactMap { PreparedLog(snapshot: $0, whitelist: whitelist, calendar: calendar) })
         }
@@ -409,6 +424,7 @@ enum ActivityAggregateCacheStore {
         // 删除操作会改变历史日的事实源，直接清除该日所有规则版本的缓存，下一次统计时按需重建。
         execute(database, sql: "DELETE FROM ZGT_ACTIVITY_AGGREGATE_CACHE WHERE ZDAYSTART = ?", bindings: [.double(dayStart.timeIntervalSinceReferenceDate)])
         execute(database, sql: "DELETE FROM ZGT_ACTIVITY_AGGREGATE_META WHERE ZDAYSTART = ?", bindings: [.double(dayStart.timeIntervalSinceReferenceDate)])
+        invalidateValidation(for: dayStart)
     }
 
     static func prewarmClosedDays(databaseURL: URL, whitelist: WhitelistSnapshot, calendar: Calendar) {
@@ -429,6 +445,7 @@ enum ActivityAggregateCacheStore {
 
         // 启动后只预热已经结束的完整自然日；今天仍保持实时读取，避免前台活动持续写入时缓存频繁失效。
         for dayStart in plan.cacheableDays {
+            guard !Task.isCancelled else { return }
             let fingerprint = sourceFingerprint(database: database, dayStart: dayStart, calendar: calendar)
             if cachedFingerprint(database: database, cacheVersion: cacheVersion, dayStart: dayStart) != fingerprint {
                 rebuildCache(
@@ -478,6 +495,24 @@ enum ActivityAggregateCacheStore {
         for statement in statements {
             sqlite3_exec(database, statement, nil, nil, nil)
         }
+    }
+
+    private static func needsValidation(cacheVersion: String, dayStart: Date) -> Bool {
+        validationLock.lock()
+        defer { validationLock.unlock() }
+        return !validatedDays.contains(AggregateCacheValidationKey(cacheVersion: cacheVersion, dayStart: dayStart))
+    }
+
+    private static func markValidated(cacheVersion: String, dayStart: Date) {
+        validationLock.lock()
+        validatedDays.insert(AggregateCacheValidationKey(cacheVersion: cacheVersion, dayStart: dayStart))
+        validationLock.unlock()
+    }
+
+    private static func invalidateValidation(for dayStart: Date) {
+        validationLock.lock()
+        validatedDays = Set(validatedDays.filter { $0.dayStart != dayStart })
+        validationLock.unlock()
     }
 
     private static func buildFetchPlan(
@@ -988,6 +1023,17 @@ final class StatisticsEngine {
     private let calendar = Calendar.current
 
     // MARK: - Data Refreshing
+
+    func cancelPendingWork() {
+        // 关闭统计窗口后立即让后台读取和聚合失效，避免用户已经离开页面时仍继续占用 CPU 与磁盘。
+        baseDataLoadingTask?.cancel()
+        filterComputationTask?.cancel()
+        baseDataLoadingToken &+= 1
+        filterComputationToken &+= 1
+        baseDataLoadingTask = nil
+        filterComputationTask = nil
+        isLoadingBaseData = false
+    }
 
     /// 刷新选定周期下的底量数据，执行数据库抓取并清洗
     func refreshBaseData(for range: StatisticsRange, modelContext: ModelContext, whitelist: WhitelistManager) {

@@ -71,8 +71,6 @@ enum AppPanelVariant {
 struct AppPanelModifier: ViewModifier {
     let variant: AppPanelVariant
 
-    @State private var isHovered = false
-
     func body(content: Content) -> some View {
         content
             .padding(variant.padding)
@@ -81,13 +79,9 @@ struct AppPanelModifier: ViewModifier {
                     .fill(variant.fill)
                     .overlay(
                         RoundedRectangle(cornerRadius: variant.radius, style: .continuous)
-                            .stroke(Color.primary.opacity(isHovered ? 0.09 : 0.045), lineWidth: 1)
+                            .stroke(Color.primary.opacity(0.045), lineWidth: 1)
                     )
             )
-            .shadow(color: Color.black.opacity(isHovered ? 0.055 : 0.025), radius: isHovered ? 10 : 5, y: isHovered ? 4 : 2)
-            .offset(y: isHovered ? -1 : 0)
-            .animation(AppDesign.animationCurve, value: isHovered)
-            .onHover { isHovered = $0 }
     }
 }
 

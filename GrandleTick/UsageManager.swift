@@ -36,12 +36,16 @@ final class UsageManager {
     func startTracking() {
         trackingTimer?.invalidate()
 
-        trackingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: AppConfig.trackingHeartbeatInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 self.handleTrackingTick(at: Date())
             }
         }
+        // 给系统留出合并唤醒的空间，减少菜单栏常驻小工具的能耗，同时仍保持接近实时的展示体验。
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .default)
+        trackingTimer = timer
     }
 
     func flushPendingSession() {
@@ -463,7 +467,7 @@ final class UsageManager {
             }
             
             guard let domain = resolvedDomain else { return false }
-            let isWhitelistedDomain = whitelist.domains.contains { $0.lowercased() == domain.lowercased() }
+            let isWhitelistedDomain = whitelist.lowercasedDomainSet.contains(domain.lowercased())
             
             if domain == "bilibili.com" {
                 return log.bilibiliIdentifier != nil

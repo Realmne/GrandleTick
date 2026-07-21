@@ -203,8 +203,6 @@ private struct WhitelistCategoryCard: View {
     let emptyText: String
     let onDelete: (String) -> Void
 
-    @State private var isHovered = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
@@ -258,13 +256,9 @@ private struct WhitelistCategoryCard: View {
                 .fill(AppDesign.panelBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
-                        .stroke(tint.opacity(isHovered ? 0.20 : 0.08), lineWidth: 1)
+                        .stroke(tint.opacity(0.08), lineWidth: 1)
                 )
         )
-        .shadow(color: tint.opacity(isHovered ? 0.08 : 0), radius: 12, y: 4)
-        .offset(y: isHovered ? -1 : 0)
-        .animation(AppDesign.animationCurve, value: isHovered)
-        .onHover { isHovered = $0 }
     }
 }
 

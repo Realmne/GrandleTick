@@ -37,7 +37,8 @@ struct StatisticsView: View {
                     emptyStateView
                 } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
+                        // LazyVStack 只创建视口附近的重型图表和明细，避免打开页面时一次性构建整棵长列表。
+                        LazyVStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
                             // 3. 统计核心卡片组，提供总时长、活跃天数等核心指标。
                             overviewCardsGrid
 
@@ -195,7 +196,8 @@ struct StatisticsView: View {
                 }
             }
         }
-        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+        // 使用 default mode，用户拖动滚动条或触控板滚动时系统会自然暂停刷新，避免滚动中重算整页。
+        .onReceive(Timer.publish(every: 60, tolerance: 8, on: .main, in: .default).autoconnect()) { _ in
             refreshRangeData()
         }
         .onChange(of: whitelist.whitelistedApps) { _, _ in refreshRangeData() }
@@ -225,6 +227,7 @@ struct StatisticsView: View {
         .onChange(of: selectedDomainFilter) { _, _ in refreshFiltersOnly() }
         .onDisappear {
             searchDebounceTask?.cancel()
+            engine.cancelPendingWork()
         }
     }
 
@@ -933,6 +936,12 @@ private struct SummaryEntryRowView: View {
     let formatDuration: (TimeInterval) -> String
     let onDelete: (String) -> Void
 
+    @State private var showsAllDetails = false
+
+    private var visibleDetails: ArraySlice<SummaryDetail> {
+        showsAllDetails ? summary.details[...] : summary.details.prefix(4)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
@@ -947,7 +956,8 @@ private struct SummaryEntryRowView: View {
                     Text(formatDuration(summary.totalTime)).font(.system(size: 12, design: .monospaced)).foregroundColor(.secondary)
                 }
 
-                ForEach(summary.details) { detail in
+                // 默认限制每组的明细节点数量，长时间使用后单日记录再多也不会拖慢整页滚动。
+                ForEach(visibleDetails) { detail in
                     HStack(alignment: .top) {
                         Text("•").foregroundColor(.secondary)
                         VStack(alignment: .leading, spacing: 1) {
@@ -964,6 +974,17 @@ private struct SummaryEntryRowView: View {
                             Label("删除本条记录", systemImage: "trash")
                         }
                     }
+                }
+
+                if summary.details.count > 4 {
+                    Button(showsAllDetails ? "收起明细" : "展开其余 \(summary.details.count - 4) 项") {
+                        withAnimation(AppDesign.animationCurve) {
+                            showsAllDetails.toggle()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AppDesign.primaryBlue)
                 }
             }
         }
@@ -986,10 +1007,10 @@ private struct LearningVsEntertainmentDonutCard: View {
     private var studyShare: Double { total > 0 ? studyDuration / total : 1.0 }
 
     struct Segment: Identifiable {
-        let id = UUID()
         let type: String
         let duration: Double
         let color: Color
+        var id: String { type }
     }
 
     var body: some View {
@@ -1062,10 +1083,10 @@ private struct ContentCategoryDonutCard: View {
     @State private var animateData = false
 
     struct Category: Identifiable {
-        let id = UUID()
         let name: String
         let duration: Double
         let color: Color
+        var id: String { name }
     }
 
     private var categories: [Category] {
@@ -1191,7 +1212,7 @@ private struct ReportRhythmHourlyChart: View {
 
     var body: some View {
         let chartData = hourlyDurations.enumerated().map { index, value in
-            (hour: index, value: animateData ? (value / 3600.0) : 0.0)
+            (hour: index, value: value / 3600.0)
         }
 
         Chart {
@@ -1225,6 +1246,9 @@ private struct ReportRhythmHourlyChart: View {
             }
         }
         .frame(height: 120)
+        // 仅对合成层做入场效果，不再逐帧修改 48 个 Chart mark 的数据并触发布局。
+        .opacity(reduceMotion || animateData ? 1 : 0)
+        .scaleEffect(y: reduceMotion || animateData ? 1 : 0.96, anchor: .bottom)
         .chartXAxis {
             AxisMarks(values: ["0点", "4点", "8点", "12点", "16点", "20点"]) { value in
                 AxisValueLabel {
@@ -1294,10 +1318,10 @@ private struct AppFocusDonutCard: View {
     ]
 
     struct Segment: Identifiable {
-        let id = UUID()
         let name: String
         let duration: Double
         let color: Color
+        var id: String { name }
     }
 
     private var segments: [Segment] {
@@ -1496,7 +1520,6 @@ private struct ReportPagerButton: View {
 
 struct StatisticsPanelBackground: ViewModifier {
     var isSecondary: Bool = false
-    @State private var isHovered = false
 
     func body(content: Content) -> some View {
         let resolvedRadius = isSecondary ? AppDesign.mediumCornerRadius : AppDesign.largeCornerRadius
@@ -1508,13 +1531,9 @@ struct StatisticsPanelBackground: ViewModifier {
                     .fill(isSecondary ? AppDesign.elevatedPanelBackground : AppDesign.panelBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: resolvedRadius, style: .continuous)
-                            .stroke(Color.primary.opacity(isHovered ? 0.08 : 0.04), lineWidth: 1)
+                            .stroke(Color.primary.opacity(0.04), lineWidth: 1)
                     )
             )
-            .shadow(color: Color.black.opacity(isHovered ? 0.05 : 0.018), radius: isHovered ? 10 : 4, y: isHovered ? 4 : 1)
-            .offset(y: isHovered ? -1 : 0)
-            .animation(AppDesign.animationCurve, value: isHovered)
-            .onHover { isHovered = $0 }
     }
 }
 

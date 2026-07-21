@@ -36,14 +36,8 @@ struct GrandleTickApp: App {
             _usageManager = State(initialValue: manager)
             appDelegate.configure(usageManager: manager, modelContext: context)
 
-            Task.detached(priority: .utility) {
-                // 4. 应用启动后后台预热已结束日期的统计缓存，让“今年/全部”等大范围视图尽量直接命中聚合表。
-                ActivityAggregateCacheStore.prewarmClosedDays(
-                    databaseURL: databaseFileURL,
-                    whitelist: WhitelistSnapshot(whitelist: WhitelistManager.shared),
-                    calendar: .current
-                )
-            }
+            // 4. 历史统计缓存改为打开数据中心时按需建立。常驻菜单栏阶段不扫描全部历史数据库，
+            // 让没有查看报表的绝大多数时间保持接近零后台开销。
         } catch {
             fatalError("无法初始化数据库容器: \(error)")
         }
@@ -81,6 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             usageManager: usageManager,
             modelContext: modelContext
         )
+
+        // 自动化性能检查可通过启动参数直接打开数据中心，避免测试依赖菜单栏坐标；正常启动路径不受影响。
+        if CommandLine.arguments.contains("--open-statistics") {
+            DispatchQueue.main.async {
+                FeatureWindowCoordinator.shared.openStatisticsWindow(modelContext: modelContext)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

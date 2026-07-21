@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 enum BrowserService {
     // 1. 获取浏览器当前的活动标签页 URL。
@@ -16,13 +16,27 @@ enum BrowserService {
             return nil
         }
 
-        // 2. 实例化并执行 AppleScript，获取当前标签页的 URL 字符串。
-        var error: NSDictionary?
-        if let appleScript = NSAppleScript(source: script) {
-            let result = appleScript.executeAndReturnError(&error)
-            return result.stringValue
+        // 2. 通过独立的 osascript 进程执行脚本。NSAppleScript 属于 AppKit，放到后台线程会触发主事件队列断言；
+        // 独立进程既不会阻塞 GrandleTick 主线程，也不会让 AppKit 跨线程运行。
+        let process = Process()
+        let outputPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        process.standardOutput = outputPipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let value = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return value?.isEmpty == false ? value : nil
+        } catch {
+            return nil
         }
-        return nil
     }
 
     // 2. 检查应用是否属于受支持的浏览器。

@@ -85,7 +85,7 @@ final class ActivityTracker {
         lastTrackAt = now
 
         // 2. 辅助功能权限可能在系统设置里被用户改掉，事件驱动也需要定期重新确认。
-        if now.timeIntervalSince(lastTrustCheckAt) >= AppConfig.trustRefreshInterval || forceRefresh {
+        if now.timeIntervalSince(lastTrustCheckAt) >= AppConfig.trustRefreshInterval {
             cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: false)
             lastTrustCheckAt = now
         }
@@ -253,14 +253,15 @@ final class ActivityTracker {
             return
         }
 
-        let browserUrl = BrowserService.fetchActiveURL(for: appName)
-        lastBrowserURLRefreshAt = now
+        // 新标签页和标题变化以前会在主线程同步执行 AppleScript，最慢时会冻结整个 SwiftUI 界面。
+        // 先根据窗口标题发布轻量兜底状态，再由 utility 任务读取 URL 并回到主线程修正结果。
+        scheduleBrowserURLRefresh(for: refreshKey)
         applyResolvedBrowserSnapshot(
             appName: appName,
             bundleId: bundleId,
             processId: processId,
             rawTitle: rawTitle,
-            browserUrl: browserUrl
+            browserUrl: nil
         )
     }
 
@@ -345,6 +346,7 @@ final class ActivityTracker {
                         groupedTitle = mainTitle
                     } else if let bilibiliIdentifier {
                         ActivityTracker.bilibiliIdToMainTitleCache[bilibiliIdentifier] = cleanedTitle
+                        ActivityTracker.trimCache(&ActivityTracker.bilibiliIdToMainTitleCache, limit: 128)
                         groupedTitle = cleanedTitle
                     } else {
                         groupedTitle = cleanedTitle
@@ -392,6 +394,7 @@ final class ActivityTracker {
             displayTitle: displayTitle,
             groupedTitle: groupedTitle
         )
+        ActivityTracker.trimCache(&ActivityTracker.titleCache, limit: 256)
 
         applySnapshot(
             TrackedSnapshot(
@@ -421,13 +424,13 @@ final class ActivityTracker {
                 guard let self else { return }
 
                 self.pendingBrowserURLRefreshKeys.remove(refreshKey)
-                self.prefetchedBrowserURLResults[refreshKey] = BrowserURLRefreshResult(url: browserUrl)
+                guard let lastResolvedSnapshot = self.lastResolvedSnapshot,
+                      lastResolvedSnapshot.processId == refreshKey.processId,
+                      lastResolvedSnapshot.rawTitle == refreshKey.rawTitle else { return }
 
-                if let lastResolvedSnapshot = self.lastResolvedSnapshot,
-                   lastResolvedSnapshot.processId == refreshKey.processId,
-                   lastResolvedSnapshot.rawTitle == refreshKey.rawTitle {
-                    self.track(forceRefresh: true)
-                }
+                // 用户已切走的旧标签页结果直接丢弃，避免异步结果字典在长期运行中不断增长。
+                self.prefetchedBrowserURLResults[refreshKey] = BrowserURLRefreshResult(url: browserUrl)
+                self.track(forceRefresh: true)
             }
         }
     }
@@ -534,6 +537,7 @@ final class ActivityTracker {
                 self.pendingBilibiliMetadataRequests.remove(bilibiliIdentifier)
                 if let metadata {
                     ActivityTracker.bilibiliMetadataCache[bilibiliIdentifier] = metadata
+                    ActivityTracker.trimCache(&ActivityTracker.bilibiliMetadataCache, limit: 128)
                 }
                 self.track(forceRefresh: true)
             }
@@ -553,6 +557,15 @@ final class ActivityTracker {
         // 预览只在明确识别出 PDF 文件名时才参与统计，
         // 避免欢迎页、图片或其它非 PDF 文档被误算进学习时长。
         return String(cleanedTitle[..<range.upperBound])
+    }
+
+    /// 常驻菜单栏应用生命周期很长，浏览过的标题和视频数量理论上没有上限；限制缓存可防止内存缓慢增长。
+    private static func trimCache<Key: Hashable, Value>(_ cache: inout [Key: Value], limit: Int) {
+        guard cache.count > limit else { return }
+        let overflow = cache.count - limit
+        for key in cache.keys.prefix(overflow) {
+            cache.removeValue(forKey: key)
+        }
     }
 
     private func matchedWhitelistedDomainFromHost(_ host: String) -> String? {
