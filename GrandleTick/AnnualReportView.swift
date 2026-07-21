@@ -14,9 +14,9 @@ struct AnnualReportView: View {
     
     // 1. 年度报告跟随主应用的浅色信息卡风格，避免暗色报告与统计页整体视觉割裂。
     static let studyColor = AppDesign.primaryBlue
-    static let entertainmentColor = AppDesign.tertiaryText.opacity(0.55)
-    static let websiteColor = AppDesign.primaryBlue.opacity(0.68)
-    static let pdfColor = AppDesign.primaryBlue.opacity(0.42)
+    static let entertainmentColor = AppDesign.leisurePurple
+    static let websiteColor = AppDesign.websiteTeal
+    static let pdfColor = AppDesign.documentOrange
     static let primaryText = AppDesign.primaryText
     static let secondaryText = AppDesign.secondaryText
     static let tertiaryText = AppDesign.tertiaryText
@@ -954,8 +954,8 @@ private struct StreakCard: View {
                 if let strongestDay {
                     HStack(spacing: 16) {
                         ZStack {
-                            Circle().fill(Color.blue.opacity(0.12)).frame(width: 48, height: 48)
-                            Image(systemName: "trophy.fill").font(.system(size: 20)).foregroundColor(.blue)
+                            Circle().fill(AppDesign.documentOrange.opacity(0.12)).frame(width: 48, height: 48)
+                            Image(systemName: "trophy.fill").font(.system(size: 20)).foregroundColor(AppDesign.documentOrange)
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {

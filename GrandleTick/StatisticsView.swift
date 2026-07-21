@@ -87,12 +87,14 @@ struct StatisticsView: View {
                                 ReportRankingPanel(
                                     title: "常用网站（前三）",
                                     items: engine.topWebsites,
+                                    tint: AppDesign.websiteTeal,
                                     formatDuration: formatCompactDuration
                                 )
 
                                 ReportRankingPanel(
                                     title: "常用 PDF（前三）",
                                     items: engine.topPDFs,
+                                    tint: AppDesign.documentOrange,
                                     formatDuration: formatCompactDuration
                                 )
                             }
@@ -306,31 +308,48 @@ struct StatisticsView: View {
     @ViewBuilder
     private var overviewCardsGrid: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AppSectionHeader(title: "本期学习概览", subtitle: selectedRange.title, compact: true)
+            HStack {
+                AppSectionHeader(title: "本期学习概览", subtitle: selectedRange.title, compact: true)
+                Spacer()
+                Label("持续积累中", systemImage: "waveform.path.ecg")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AppDesign.primaryBlue)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(AppDesign.primaryBlueMuted))
+            }
 
-            HStack(alignment: .center, spacing: 22) {
-                VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 7) {
                     Text("总学习时长")
                         .font(.caption)
                         .foregroundStyle(AppDesign.secondaryText)
-                    AppStatValue(value: formatDetailedDuration(engine.studyDuration))
+                    AppStatValue(value: formatDetailedDuration(engine.studyDuration), tint: AppDesign.primaryBlue)
+
+                    Text("专注时间是这份报告最重要的数字")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppDesign.tertiaryText)
                 }
+                .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                        .fill(AppDesign.tintedSurface(AppDesign.primaryBlue, opacity: 0.13))
+                )
 
-                Rectangle()
-                    .fill(Color.primary.opacity(0.07))
-                    .frame(width: 1, height: 62)
-
-                HStack(spacing: 24) {
-                    OverviewMetric(title: "日均学习", value: formatCompactDuration(engine.averageDailyDuration))
-                    OverviewMetric(title: "活跃天数", value: "\(engine.activeDays) 天")
-                    OverviewMetric(title: "最长连续", value: "\(engine.longestStreak) 天")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    OverviewMetric(title: "日均学习", value: formatCompactDuration(engine.averageDailyDuration), icon: "chart.bar.fill", tint: AppDesign.websiteTeal)
+                    OverviewMetric(title: "活跃天数", value: "\(engine.activeDays) 天", icon: "calendar.badge.checkmark", tint: AppDesign.successGreen)
+                    OverviewMetric(title: "最长连续", value: "\(engine.longestStreak) 天", icon: "flame.fill", tint: AppDesign.documentOrange)
                     OverviewMetric(
                         title: "与上期对比",
                         value: formatComparisonValue(engine.comparison),
-                        subtitle: formatComparisonSubtitle(engine.comparison, range: selectedRange)
+                        subtitle: formatComparisonSubtitle(engine.comparison, range: selectedRange),
+                        icon: "arrow.up.right",
+                        tint: AppDesign.leisurePurple
                     )
                 }
+                .frame(width: 390)
             }
         }
         .appPanel(.regular)
@@ -512,23 +531,38 @@ private struct OverviewMetric: View {
     let title: String
     let value: String
     var subtitle: String?
+    let icon: String
+    let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption)
-                .foregroundColor(AppDesign.secondaryText)
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 25, height: 25)
+                .background(Circle().fill(tint.opacity(0.12)))
 
-            AppStatValue(value: value, compact: true, emphasized: false)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 10))
+                    .foregroundColor(AppDesign.secondaryText)
 
-            if let subtitle {
-                Text(subtitle)
-                    .font(.system(size: 9))
-                    .foregroundColor(AppDesign.tertiaryText)
-                    .lineLimit(1)
+                AppStatValue(value: value, compact: true, tint: tint)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 8))
+                        .foregroundColor(AppDesign.tertiaryText)
+                        .lineLimit(1)
+                }
             }
         }
-        .frame(minWidth: 96, alignment: .leading)
+        .padding(9)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                .fill(AppDesign.tintedSurface(tint, opacity: 0.08))
+        )
     }
 }
 
@@ -646,12 +680,14 @@ private struct FilterChip: View {
 
 private struct RangeTrendSection: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let daySummaries: [DaySummary]
     let selectedDay: Date?
     let onSelectDay: (Date) -> Void
     let formatDuration: (TimeInterval) -> String
     @State private var highlightedDay: Date?
     @State private var commitTask: Task<Void, Never>?
+    @State private var chartVisible = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -668,7 +704,10 @@ private struct RangeTrendSection: View {
                     }
                 }
             }
-            .frame(height: 200).chartYAxis { AxisMarks(position: .leading) }
+            .frame(height: 200)
+            .opacity(reduceMotion || chartVisible ? 1 : 0)
+            .scaleEffect(y: reduceMotion || chartVisible ? 1 : 0.92, anchor: .bottom)
+            .chartYAxis { AxisMarks(position: .leading) }
             .chartXAxis { AxisMarks(values: .automatic) { value in AxisGridLine(); AxisValueLabel { if let date = value.as(Date.self) { Text(formatShortDate(date)) } } } }
             .chartOverlay { proxy in GeometryReader { geometry in Rectangle().fill(.clear).contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in updateSelection(at: value.location, proxy: proxy, geometry: geometry) }) } }
 
@@ -683,7 +722,12 @@ private struct RangeTrendSection: View {
         }
         .padding(18)
         .statisticsPanel()
-        .onAppear { highlightedDay = selectedDay }
+        .onAppear {
+            highlightedDay = selectedDay
+            withAnimation(reduceMotion ? nil : AppDesign.springAnimation.delay(0.08)) {
+                chartVisible = true
+            }
+        }
         .onChange(of: selectedDay) { _, newValue in commitTask?.cancel(); if !isSameDay(highlightedDay, newValue) { highlightedDay = newValue } }
     }
 
@@ -714,13 +758,13 @@ private struct RangeTrendSection: View {
     private func barGradient(for date: Date, colorScheme: ColorScheme) -> LinearGradient {
         if isHighlighted(date) {
             return LinearGradient(
-                colors: [AppDesign.primaryBlue, AppDesign.primaryBlue.opacity(0.62)],
+                colors: [AppDesign.primaryBlue, AppDesign.websiteTeal.opacity(0.72)],
                 startPoint: .top,
                 endPoint: .bottom
             )
         } else {
             return LinearGradient(
-                colors: [Color.blue.opacity(colorScheme == .dark ? 0.35 : 0.22), Color.blue.opacity(colorScheme == .dark ? 0.15 : 0.08)],
+                colors: [AppDesign.primaryBlue.opacity(colorScheme == .dark ? 0.35 : 0.22), AppDesign.websiteTeal.opacity(colorScheme == .dark ? 0.15 : 0.08)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -750,6 +794,10 @@ private struct DayPickerSection: View {
                             .background(
                                 RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
                                     .fill(isSelected(daySummary.date) ? AppDesign.primaryBlueMuted : AppDesign.elevatedPanelBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                                    .stroke(isSelected(daySummary.date) ? AppDesign.primaryBlue.opacity(0.28) : Color.clear, lineWidth: 1)
                             )
                         }.buttonStyle(.plain)
                     }
@@ -786,10 +834,12 @@ private struct RankingSection: View {
                 VStack(spacing: 8) {
                     ForEach(Array(rankingEntries.prefix(8).enumerated()), id: \.element.id) { index, entry in
                         HStack(spacing: 12) {
+                            let rankTint = AppDesign.chartPalette[index % AppDesign.chartPalette.count]
                             Text("\(index + 1)")
                                 .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(rankTint)
                                 .frame(width: 22, height: 22)
-                                .background(Circle().fill(Color.blue.opacity(0.12)))
+                                .background(Circle().fill(rankTint.opacity(0.12)))
 
                             Text(entry.name)
                                 .font(.system(size: 13))
@@ -950,7 +1000,7 @@ private struct LearningVsEntertainmentDonutCard: View {
             HStack(spacing: 16) {
                 let data = [
                     Segment(type: "学习时间", duration: studyDuration, color: AppDesign.primaryBlue),
-                    Segment(type: "休闲时间", duration: entertainmentDuration, color: AppDesign.tertiaryText.opacity(0.50))
+                    Segment(type: "休闲时间", duration: entertainmentDuration, color: AppDesign.leisurePurple)
                 ].filter { $0.duration > 0 }
 
                 Chart(data) { segment in
@@ -985,7 +1035,7 @@ private struct LearningVsEntertainmentDonutCard: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: AppDesign.primaryBlue)
-                    ReportLegendStat(title: "休闲时间", value: formatDuration(entertainmentDuration), tint: AppDesign.tertiaryText.opacity(0.50))
+                    ReportLegendStat(title: "休闲时间", value: formatDuration(entertainmentDuration), tint: AppDesign.leisurePurple)
                 }
 
                 Spacer()
@@ -1021,9 +1071,9 @@ private struct ContentCategoryDonutCard: View {
     private var categories: [Category] {
         let appDuration = max(0, totalDuration - websiteDuration - pdfDuration)
         return [
-            Category(name: "PDF 文档", duration: pdfDuration, color: AppDesign.primaryBlue),
-            Category(name: "网页浏览", duration: websiteDuration, color: AppDesign.primaryBlue.opacity(0.64)),
-            Category(name: "应用", duration: appDuration, color: AppDesign.primaryBlue.opacity(0.34))
+            Category(name: "PDF 文档", duration: pdfDuration, color: AppDesign.documentOrange),
+            Category(name: "网页浏览", duration: websiteDuration, color: AppDesign.websiteTeal),
+            Category(name: "应用", duration: appDuration, color: AppDesign.primaryBlue)
         ].filter { $0.duration > 0 }
     }
 
@@ -1164,7 +1214,13 @@ private struct ReportRhythmHourlyChart: View {
                     x: .value("时间", "\(item.hour)点"),
                     y: .value("时长", item.value)
                 )
-                .foregroundStyle(AppDesign.primaryBlue)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [AppDesign.primaryBlue, AppDesign.websiteTeal],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
             }
         }
@@ -1232,9 +1288,9 @@ private struct AppFocusDonutCard: View {
 
     private let palette: [Color] = [
         AppDesign.primaryBlue,
-        AppDesign.primaryBlue.opacity(0.72),
-        AppDesign.primaryBlue.opacity(0.48),
-        AppDesign.primaryBlue.opacity(0.28)
+        AppDesign.websiteTeal,
+        AppDesign.documentOrange,
+        AppDesign.leisurePurple
     ]
 
     struct Segment: Identifiable {
@@ -1318,6 +1374,7 @@ private struct AppFocusDonutCard: View {
 private struct ReportRankingPanel: View {
     let title: String
     let items: [RankingEntry]
+    let tint: Color
     let formatDuration: (TimeInterval) -> String
 
     var body: some View {
@@ -1356,7 +1413,13 @@ private struct ReportRankingPanel: View {
                                         .frame(height: 6)
 
                                     Capsule()
-                                        .fill(Color.blue.opacity(0.6))
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [tint, tint.opacity(0.55)],
+                                                startPoint: .leading,
+                                                endPoint: .trailing
+                                            )
+                                        )
                                         .frame(width: max(geometry.size.width * CGFloat(share), 6), height: 6)
                                 }
                             }
@@ -1433,6 +1496,7 @@ private struct ReportPagerButton: View {
 
 struct StatisticsPanelBackground: ViewModifier {
     var isSecondary: Bool = false
+    @State private var isHovered = false
 
     func body(content: Content) -> some View {
         let resolvedRadius = isSecondary ? AppDesign.mediumCornerRadius : AppDesign.largeCornerRadius
@@ -1442,7 +1506,15 @@ struct StatisticsPanelBackground: ViewModifier {
                 // 宽屏面板与主菜单共用填充与圆角，不再使用白色悬浮卡片和描边。
                 RoundedRectangle(cornerRadius: resolvedRadius, style: .continuous)
                     .fill(isSecondary ? AppDesign.elevatedPanelBackground : AppDesign.panelBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: resolvedRadius, style: .continuous)
+                            .stroke(Color.primary.opacity(isHovered ? 0.08 : 0.04), lineWidth: 1)
+                    )
             )
+            .shadow(color: Color.black.opacity(isHovered ? 0.05 : 0.018), radius: isHovered ? 10 : 4, y: isHovered ? 4 : 1)
+            .offset(y: isHovered ? -1 : 0)
+            .animation(AppDesign.animationCurve, value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 

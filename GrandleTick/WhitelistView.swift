@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct WhitelistView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var whitelistManager = WhitelistManager.shared
+    @State private var contentVisible = false
 
     private var defaultApps: [String] {
         whitelistManager.whitelistedApps
@@ -54,7 +56,7 @@ struct WhitelistView: View {
                         title: "域名",
                         subtitle: "统计这些域名",
                         symbolName: "globe.europe.africa.fill",
-                        tint: AppDesign.primaryBlue,
+                        tint: AppDesign.websiteTeal,
                         totalCount: whitelistManager.whitelistedDomains.count,
                         defaultTitle: "默认",
                         defaultItems: defaultDomains,
@@ -67,11 +69,18 @@ struct WhitelistView: View {
                     hintSection
                 }
                 .padding(24)
+                .opacity(contentVisible ? 1 : 0)
+                .offset(y: reduceMotion || contentVisible ? 0 : 8)
             }
             .background(AppDesign.appBackground)
         }
         .frame(minWidth: 520, minHeight: 660)
         .ignoresSafeArea(.all, edges: .top)
+        .onAppear {
+            withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
+                contentVisible = true
+            }
+        }
     }
 
     private var headerView: some View {
@@ -105,7 +114,7 @@ struct WhitelistView: View {
                 value: "\(whitelistManager.whitelistedDomains.count)",
                 detail: "自定义 \(customDomains.count) 项",
                 symbolName: "network",
-                tint: AppDesign.primaryBlue
+                tint: AppDesign.websiteTeal
             )
         }
     }
@@ -194,6 +203,8 @@ private struct WhitelistCategoryCard: View {
     let emptyText: String
     let onDelete: (String) -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
@@ -245,7 +256,15 @@ private struct WhitelistCategoryCard: View {
         .background(
             RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
                 .fill(AppDesign.panelBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius, style: .continuous)
+                        .stroke(tint.opacity(isHovered ? 0.20 : 0.08), lineWidth: 1)
+                )
         )
+        .shadow(color: tint.opacity(isHovered ? 0.08 : 0), radius: 12, y: 4)
+        .offset(y: isHovered ? -1 : 0)
+        .animation(AppDesign.animationCurve, value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 

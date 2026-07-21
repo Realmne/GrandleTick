@@ -7,8 +7,15 @@ enum AppDesign {
     static let elevatedPanelBackground = Color.primary.opacity(0.035)
 
     static let primaryBlue = Color.blue
+    static let leisurePurple = Color.purple
+    static let websiteTeal = Color.teal
+    static let documentOrange = Color.orange
+    static let successGreen = Color.green
     static let primaryBlueMuted = Color.blue.opacity(0.10)
     static let destructiveRed = Color.red.opacity(0.8)
+
+    /// 图表只从这组克制的语义色中取色，既能区分类别，又避免统计页变成高饱和“彩虹面板”。
+    static let chartPalette: [Color] = [primaryBlue, websiteTeal, documentOrange, leisurePurple, successGreen]
 
     static let primaryText = Color.primary
     static let secondaryText = Color.secondary
@@ -21,8 +28,17 @@ enum AppDesign {
     static let compactSectionSpacing: CGFloat = 12
     static let controlHeight: CGFloat = 36
 
-    static let animationDuration = 0.20
+    static let animationDuration = 0.24
     static let animationCurve = Animation.easeInOut(duration: animationDuration)
+    static let springAnimation = Animation.spring(response: 0.38, dampingFraction: 0.82)
+
+    static func tintedSurface(_ tint: Color, opacity: Double = 0.10) -> LinearGradient {
+        LinearGradient(
+            colors: [tint.opacity(opacity), tint.opacity(opacity * 0.35)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 }
 
 enum AppPanelVariant {
@@ -55,13 +71,23 @@ enum AppPanelVariant {
 struct AppPanelModifier: ViewModifier {
     let variant: AppPanelVariant
 
+    @State private var isHovered = false
+
     func body(content: Content) -> some View {
         content
             .padding(variant.padding)
             .background(
                 RoundedRectangle(cornerRadius: variant.radius, style: .continuous)
                     .fill(variant.fill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: variant.radius, style: .continuous)
+                            .stroke(Color.primary.opacity(isHovered ? 0.09 : 0.045), lineWidth: 1)
+                    )
             )
+            .shadow(color: Color.black.opacity(isHovered ? 0.055 : 0.025), radius: isHovered ? 10 : 5, y: isHovered ? 4 : 2)
+            .offset(y: isHovered ? -1 : 0)
+            .animation(AppDesign.animationCurve, value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 
@@ -89,11 +115,12 @@ struct AppStatValue: View {
     let value: String
     var compact = false
     var emphasized = true
+    var tint = AppDesign.primaryBlue
 
     var body: some View {
         Text(value)
             .font(.system(size: compact ? 18 : 36, weight: emphasized ? .bold : .semibold, design: .monospaced))
-            .foregroundStyle(emphasized ? AppDesign.primaryBlue : AppDesign.primaryText)
+            .foregroundStyle(emphasized ? tint : AppDesign.primaryText)
             .contentTransition(.numericText())
             .lineLimit(1)
             .minimumScaleFactor(0.72)

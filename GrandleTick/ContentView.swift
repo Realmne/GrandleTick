@@ -3,7 +3,10 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var usageManager: UsageManager
+
+    @State private var contentVisible = false
     
     private let requiredConfirmText = "我已知晓"
     
@@ -72,6 +75,10 @@ struct ContentView: View {
         }
         return isStudyActive ? "今日学习累计" : "今日休闲累计"
     }
+
+    private var activityTint: Color {
+        isUntracked ? .gray : (isStudyActive ? AppDesign.primaryBlue : AppDesign.leisurePurple)
+    }
     
     var body: some View {
         VStack(spacing: 16) {
@@ -97,14 +104,15 @@ struct ContentView: View {
             VStack(alignment: .center, spacing: 12) {
                 StatusPill(
                     text: isUntracked ? "已暂停统计" : (isStudyActive ? "学习中" : "休闲中"),
-                    tint: isUntracked ? .gray : (isStudyActive ? .blue : .purple),
+                    tint: activityTint,
                     systemImage: isUntracked ? "pause.fill" : (isStudyActive ? "book.fill" : "gamecontroller.fill")
                 )
 
                 Image(systemName: isUntracked ? "pause.circle.fill" : (isStudyActive ? "book.closed.fill" : "gamecontroller.fill"))
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(isUntracked ? .gray : (isStudyActive ? .blue : .purple))
+                    .foregroundColor(activityTint)
                     .frame(width: 28, height: 28)
+                    .contentTransition(.symbolEffect(.replace))
 
                 VStack(spacing: 6) {
                     Text(currentTitle)
@@ -144,7 +152,11 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius)
-                    .fill(AppDesign.panelBackground)
+                    .fill(AppDesign.tintedSurface(activityTint, opacity: 0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius)
+                            .stroke(activityTint.opacity(0.12), lineWidth: 1)
+                    )
             )
             
             VStack(alignment: .center, spacing: 8) {
@@ -154,7 +166,8 @@ struct ContentView: View {
 
                 Text(usageManager.formattedPopoverDuration)
                     .font(.system(size: 36, weight: .bold, design: .monospaced))
-                    .foregroundColor(isUntracked ? .gray : (isStudyActive ? .blue : .purple))
+                    .foregroundColor(activityTint)
+                    .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -170,7 +183,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .center)
             .background(
                 RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius)
-                    .fill(AppDesign.elevatedPanelBackground)
+                    .fill(AppDesign.tintedSurface(activityTint, opacity: 0.12))
             )
             
             VStack(spacing: 10) {
@@ -214,6 +227,14 @@ struct ContentView: View {
         }
         .padding()
         .frame(width: 320)
+        .opacity(contentVisible ? 1 : 0)
+        .offset(y: reduceMotion || contentVisible ? 0 : 6)
+        .animation(reduceMotion ? nil : AppDesign.animationCurve, value: isStudyActive)
+        .onAppear {
+            withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
+                contentVisible = true
+            }
+        }
     }
     
     func openWhitelistWindow() {
@@ -287,6 +308,8 @@ private struct ActionCapsuleButton: View {
     let tint: Color
     let action: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
@@ -299,11 +322,14 @@ private struct ActionCapsuleButton: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius)
-                    .fill(tint.opacity(0.08))
+                    .fill(tint.opacity(isHovered ? 0.14 : 0.08))
             )
+            .scaleEffect(isHovered ? 1.01 : 1)
         }
         .buttonStyle(.plain)
         .focusable(false)
         .focusEffectDisabled()
+        .animation(AppDesign.animationCurve, value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
