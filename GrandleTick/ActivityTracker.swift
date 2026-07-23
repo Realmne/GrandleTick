@@ -127,19 +127,19 @@ final class ActivityTracker {
         let isBrowserApp = BrowserService.isBrowserApp(bundleId: bundleId)
         let isPreviewApp = bundleId == "com.apple.Preview" || appName == "预览"
 
-        // 7. 获取当前焦点窗口及窗口标题。
+        // 7. 获取真正承载用户内容的窗口及其标题。
+        // 浏览器的标签页悬浮卡片会被辅助功能接口短暂报告为“焦点窗口”，其中可能包含
+        // “内存用量高 · 843 MB”等 Chrome 自己的提示。浏览器优先读取主窗口，避免把浮层文案当成网页标题。
         let appRef = AXUIElementCreateApplication(processId)
-        var windowRef: CFTypeRef?
-        let focusedWindowResult = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef)
-        guard focusedWindowResult == .success, let windowElement = windowRef else {
+        guard let windowElement = trackedWindowElement(for: appRef, prefersMainWindow: isBrowserApp) else {
             observedFocusedWindow = nil
             clearTrackedState()
             return
         }
-        observeTitleChangesIfNeeded(for: windowElement as! AXUIElement)
+        observeTitleChangesIfNeeded(for: windowElement)
 
         var titleRef: CFTypeRef?
-        let titleResult = AXUIElementCopyAttributeValue(windowElement as! AXUIElement, kAXTitleAttribute as CFString, &titleRef)
+        let titleResult = AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
         guard titleResult == .success, let rawTitle = titleRef as? String else {
             clearTrackedState()
             return
@@ -150,7 +150,7 @@ final class ActivityTracker {
             if let normalizedTitle = normalizedPreviewPDFTitle(from: rawTitle) {
                 // (1) 复制焦点窗口的 AXDocument 属性获取真实的 file:// 协议路径
                 var docRef: CFTypeRef?
-                let docResult = AXUIElementCopyAttributeValue(windowElement as! AXUIElement, "AXDocument" as CFString, &docRef)
+                let docResult = AXUIElementCopyAttributeValue(windowElement, "AXDocument" as CFString, &docRef)
                 let docUrl: URL? = {
                     if docResult == .success, let docUrlString = docRef as? String {
                         return URL(string: docUrlString)
@@ -207,6 +207,34 @@ final class ActivityTracker {
                 pdfIdentifier: nil
             )
         )
+    }
+
+    private func trackedWindowElement(
+        for appElement: AXUIElement,
+        prefersMainWindow: Bool
+    ) -> AXUIElement? {
+        // 1. 浏览器优先取主窗口，隔离标签页悬浮卡片、菜单和提示气泡等临时焦点元素。
+        if prefersMainWindow {
+            var mainWindowRef: CFTypeRef?
+            let mainWindowResult = AXUIElementCopyAttributeValue(
+                appElement,
+                kAXMainWindowAttribute as CFString,
+                &mainWindowRef
+            )
+            if mainWindowResult == .success, let mainWindow = mainWindowRef as! AXUIElement? {
+                return mainWindow
+            }
+        }
+
+        // 2. 非浏览器仍使用焦点窗口；浏览器取不到主窗口时也用它兜底，避免全屏切换期间停止统计。
+        var focusedWindowRef: CFTypeRef?
+        let focusedWindowResult = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowRef
+        )
+        guard focusedWindowResult == .success else { return nil }
+        return focusedWindowRef as! AXUIElement?
     }
 
     private func resolveBrowserSnapshot(
