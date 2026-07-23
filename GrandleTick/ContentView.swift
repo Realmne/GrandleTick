@@ -5,6 +5,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var usageManager: UsageManager
+    var breakReminderManager: BreakReminderManager
 
     @State private var contentVisible = false
     
@@ -185,6 +186,8 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: AppDesign.largeCornerRadius)
                     .fill(AppDesign.tintedSurface(activityTint, opacity: 0.12))
             )
+
+            BreakTimerControlView(reminderManager: breakReminderManager)
             
             VStack(spacing: 10) {
                 ActionCapsuleButton(
@@ -281,6 +284,96 @@ struct ContentView: View {
         } catch {
             print("❌ [Database] 清空失败: \(error.localizedDescription)")
         }
+    }
+}
+
+private struct BreakTimerControlView: View {
+    let reminderManager: BreakReminderManager
+    @State private var customMinutes = "45"
+
+    private var parsedCustomMinutes: Int? {
+        guard let minutes = Int(customMinutes), (1...720).contains(minutes) else {
+            return nil
+        }
+        return minutes
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("定时休息", systemImage: "cup.and.saucer.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(AppDesign.primaryText)
+
+                Spacer()
+
+                if reminderManager.isScheduled {
+                    Text("进行中")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AppDesign.successGreen)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(AppDesign.successGreen.opacity(0.12), in: Capsule())
+                }
+            }
+
+            if reminderManager.isScheduled {
+                HStack(spacing: 10) {
+                    Text(reminderManager.formattedRemainingDuration)
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .foregroundStyle(AppDesign.successGreen)
+                        .contentTransition(.numericText())
+                        .accessibilityLabel("距离休息")
+                        .accessibilityValue(reminderManager.formattedRemainingDuration)
+
+                    Spacer()
+
+                    Button("取消") {
+                        reminderManager.cancel()
+                    }
+                    .buttonStyle(AppCapsuleButtonStyle(role: .secondary, compact: true))
+                }
+            } else {
+                HStack(spacing: 7) {
+                    ForEach([25, 45, 60], id: \.self) { minutes in
+                        Button("\(minutes) 分钟") {
+                            reminderManager.schedule(minutes: minutes)
+                        }
+                        .buttonStyle(AppCapsuleButtonStyle(role: .secondary, compact: true))
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    TextField("自定义分钟", text: $customMinutes)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                        .onSubmit(startCustomReminder)
+
+                    Text("分钟")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppDesign.secondaryText)
+
+                    Button("开始", action: startCustomReminder)
+                        .buttonStyle(AppCapsuleButtonStyle(role: .primary, compact: true))
+                        .disabled(parsedCustomMinutes == nil)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                .fill(AppDesign.tintedSurface(AppDesign.successGreen, opacity: 0.09))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                        .stroke(AppDesign.successGreen.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+
+    private func startCustomReminder() {
+        guard let parsedCustomMinutes else { return }
+        reminderManager.schedule(minutes: parsedCustomMinutes)
     }
 }
 

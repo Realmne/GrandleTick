@@ -55,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var usageManager: UsageManager?
     private var modelContext: ModelContext?
     private var statusBarController: StatusBarController?
+    private var breakReminderManager: BreakReminderManager?
+    private var breakReminderPanelCoordinator: BreakReminderPanelCoordinator?
 
     func configure(usageManager: UsageManager, modelContext: ModelContext) {
         self.usageManager = usageManager
@@ -71,12 +73,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 2. 启动时保持菜单栏模式；打开独立功能窗口后再临时显示 Dock 图标。
         NSApp.setActivationPolicy(.accessory)
+        let breakReminderManager = BreakReminderManager()
+        let breakReminderPanelCoordinator = BreakReminderPanelCoordinator(
+            reminderManager: breakReminderManager
+        )
+        self.breakReminderManager = breakReminderManager
+        self.breakReminderPanelCoordinator = breakReminderPanelCoordinator
+
         statusBarController = StatusBarController(
             usageManager: usageManager,
-            modelContext: modelContext
+            modelContext: modelContext,
+            breakReminderManager: breakReminderManager
         )
 
-        // 自动化性能检查可通过启动参数直接打开数据中心，避免测试依赖菜单栏坐标；正常启动路径不受影响。
+        // 3. 界面和提醒回调全部就绪后再恢复计时，防止过期提醒在协调器创建前被丢失。
+        breakReminderManager.restorePersistedReminder()
+
+        // 4. 自动化性能检查可通过启动参数直接打开数据中心，避免测试依赖菜单栏坐标；正常启动路径不受影响。
         if CommandLine.arguments.contains("--open-statistics") {
             DispatchQueue.main.async {
                 FeatureWindowCoordinator.shared.openStatisticsWindow(modelContext: modelContext)
@@ -93,14 +106,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class StatusBarController: NSObject {
     private let usageManager: UsageManager
     private let modelContext: ModelContext
+    private let breakReminderManager: BreakReminderManager
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
 
-    init(usageManager: UsageManager, modelContext: ModelContext) {
+    init(
+        usageManager: UsageManager,
+        modelContext: ModelContext,
+        breakReminderManager: BreakReminderManager
+    ) {
         self.usageManager = usageManager
         self.modelContext = modelContext
+        self.breakReminderManager = breakReminderManager
         super.init()
         configureStatusItem()
         configurePopover()
@@ -134,7 +153,10 @@ final class StatusBarController: NSObject {
         popover.animates = false
         popover.contentSize = NSSize(width: AppConfig.popoverWidth, height: AppConfig.popoverHeight)
         popover.contentViewController = NSHostingController(
-            rootView: ContentView(usageManager: usageManager)
+            rootView: ContentView(
+                usageManager: usageManager,
+                breakReminderManager: breakReminderManager
+            )
                 .modelContext(modelContext)
         )
     }
@@ -156,13 +178,21 @@ final class StatusBarController: NSObject {
             object: nil
         )
 
-        // 3. 安装本地事件监听，处理弹出框外的点击。
+        // 3. 到点提醒显示前收起菜单弹层，避免两个右上角窗口互相遮挡。
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBreakReminderWillPresent),
+            name: .breakReminderWillPresent,
+            object: nil
+        )
+
+        // 4. 安装本地事件监听，处理弹出框外的点击。
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             self?.closePopoverIfNeeded(for: event)
             return event
         }
 
-        // 4. 安装全局事件监听，确保在其它应用点击时也能关闭。
+        // 5. 安装全局事件监听，确保在其它应用点击时也能关闭。
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             self?.closePopover()
         }
@@ -187,6 +217,11 @@ final class StatusBarController: NSObject {
 
     @objc
     private func handleFeatureWindowWillOpen() {
+        closePopover()
+    }
+
+    @objc
+    private func handleBreakReminderWillPresent() {
         closePopover()
     }
 

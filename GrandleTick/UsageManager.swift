@@ -12,7 +12,9 @@ final class UsageManager {
     var modelContext: ModelContext?
     var menuBarTitleDidChange: ((String) -> Void)?
 
-    private var trackingTimer: Timer?
+    private var displayTimer: Timer?
+    private var activityTransitionTimer: Timer?
+    private var pendingActivityTransition: PendingActivityTransition?
     private var currentSession: ActiveSession?
     private var currentPersistedLog: ActivityLog?
     private var currentBaselineTodayDuration: TimeInterval = 0
@@ -29,23 +31,24 @@ final class UsageManager {
         }
         tracker.track(forceRefresh: true)
         startSessionIfNeeded(at: Date())
-        startTracking()
+        startDisplayTimer()
         publishMenuBarTitle()
     }
 
-    func startTracking() {
-        trackingTimer?.invalidate()
+    func startDisplayTimer() {
+        displayTimer?.invalidate()
 
-        let timer = Timer(timeInterval: AppConfig.trackingHeartbeatInterval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: AppConfig.displayRefreshInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.handleTrackingTick(at: Date())
+                self.handleDisplayTick(at: Date())
             }
         }
-        // 给系统留出合并唤醒的空间，减少菜单栏常驻小工具的能耗，同时仍保持接近实时的展示体验。
-        timer.tolerance = 0.5
-        RunLoop.main.add(timer, forMode: .default)
-        trackingTimer = timer
+        // 展示计时必须保持稳定的秒级跳动；仅保留很小的调度容差，并加入 common 模式，
+        // 避免用户操作菜单或控件时运行循环模式切换导致界面漏掉某一秒。
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        displayTimer = timer
     }
 
     func flushPendingSession() {
@@ -55,6 +58,7 @@ final class UsageManager {
     // 清空数据库后重新建立当前会话，避免下一次计时心跳把清空前的历史基准带回界面。
     func restartTrackingAfterHistoryDeletion(at restartDate: Date = Date()) {
         // 1. 丢弃指向已删除日志的会话状态和所有旧基准。
+        cancelPendingActivityTransition()
         clearSessionState()
 
         // 2. 立即清空三个展示口径，确保界面不会短暂残留旧数值。
@@ -70,22 +74,19 @@ final class UsageManager {
         reconcileTrackedActivity(at: restartDate)
     }
 
-    // 1. 处理计时器心跳。
-    // 每秒执行一次，用于刷新展示时长和定期同步到数据库。
-    private func handleTrackingTick(at now: Date) {
-        // 1. Timer 仍保留给秒级菜单栏显示，同时作为 AX/系统通知漏发时的兜底刷新。
-        tracker.track()
-        reconcileTrackedActivity(at: now)
-
-        // 2. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
+    // 1. 处理纯展示计时器。
+    // 每秒只根据当前会话的两个时间戳派生展示值，不访问辅助功能，也不重新识别前台窗口。
+    private func handleDisplayTick(at now: Date) {
+        // 1. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
         guard currentSession != nil else {
             publishMenuBarTitle()
             return
         }
 
-        // 3. 展示值由当前时刻减会话开始时刻派生出来，避免事件切换和 Timer tick 互相影响。
+        // 2. 展示值由当前时刻减会话开始时刻派生出来，计时精度与 Timer 实际触发时刻无关。
         updateDisplayedDurations(at: now)
 
+        // 3. 每分钟更新一次当前日志仅用于崩溃恢复；正常窗口切换仍由事件路径立即结算并保存。
         if persistedLogNeedsCreation {
             createPersistedLog(endDate: now)
         } else if shouldPersistSession(at: now) {
@@ -94,10 +95,32 @@ final class UsageManager {
     }
 
     // 2. 处理活动状态变更。
-    // 当 AXObserver 检测到窗口或应用切换时触发，确保统计对象及时更新。
+    // 每个系统事件都会进入这里；快速切窗通过候选会话过滤，而不是在事件入口直接丢弃。
     private func handleActivityChange(at now: Date) {
-        reconcileTrackedActivity(at: now)
-        updateDisplayedDurations(at: now)
+        let trackedActivity = TrackedActivity(from: tracker)
+
+        // 1. 当前统计身份未变化时，只同步 URL 等元数据，不打断已经连续运行的会话。
+        if trackedActivity?.identity == currentSession?.identity,
+           let trackedActivity,
+           let currentSession {
+            self.currentSession = updatedSession(currentSession, with: trackedActivity)
+            updateDisplayedDurations(at: now)
+            return
+        }
+
+        // 2. 一旦离开旧窗口就立即按事件时间结算，绝不能让后续寻找窗口的时间继续算在旧窗口上。
+        if currentSession != nil {
+            persistCurrentSession(forceSave: true, endDate: now)
+            clearSessionState()
+            setDisplayedDurations(
+                currentActivityToday: 0,
+                categoryToday: 0,
+                contentHistorical: 0
+            )
+        }
+
+        // 3. 新窗口先进入候选状态；若用户继续快速切换，只替换候选，不为中间窗口创建数据库会话。
+        queuePendingActivityTransition(trackedActivity, observedAt: now)
     }
 
     // 3. 调和当前追踪到的活动。
@@ -119,22 +142,7 @@ final class UsageManager {
         }
 
         guard let trackedActivity, let currentSession else { return }
-
-        // 2. 普通网站可能在同一域名内切换页面，累计身份不变但 fullUrl 会更新；这里保留最新 URL 供落库排查，同时不拆分累计口径。
-        if trackedActivity.fullUrl != currentSession.fullUrl
-            || trackedActivity.bilibiliTidV2 != currentSession.bilibiliTidV2 {
-            self.currentSession = ActiveSession(
-                identity: currentSession.identity,
-                startDate: currentSession.startDate,
-                appName: trackedActivity.appName,
-                groupedTitle: trackedActivity.groupedTitle,
-                domain: trackedActivity.domain,
-                bilibiliIdentifier: trackedActivity.bilibiliIdentifier,
-                bilibiliTidV2: trackedActivity.bilibiliTidV2,
-                fullUrl: trackedActivity.fullUrl,
-                pdfIdentifier: trackedActivity.pdfIdentifier
-            )
-        }
+        self.currentSession = updatedSession(currentSession, with: trackedActivity)
     }
 
     private var persistedLogNeedsCreation: Bool {
@@ -158,6 +166,10 @@ final class UsageManager {
             return
         }
 
+        startSession(for: trackedActivity, at: startDate)
+    }
+
+    private func startSession(for trackedActivity: TrackedActivity, at startDate: Date) {
         currentSession = ActiveSession(
             identity: trackedActivity.identity,
             startDate: startDate,
@@ -188,6 +200,87 @@ final class UsageManager {
 
         // 3. 触发第一次的显示值刷新。
         updateDisplayedDurations(at: startDate)
+    }
+
+    private func queuePendingActivityTransition(
+        _ trackedActivity: TrackedActivity?,
+        observedAt: Date
+    ) {
+        guard let trackedActivity else {
+            cancelPendingActivityTransition()
+            return
+        }
+
+        // 同一候选身份的异步元数据补全不算再次切窗：更新内容即可，保留最初切入该窗口的时间戳。
+        if let pendingActivityTransition,
+           pendingActivityTransition.activity.identity == trackedActivity.identity {
+            self.pendingActivityTransition = PendingActivityTransition(
+                activity: trackedActivity,
+                observedAt: pendingActivityTransition.observedAt
+            )
+            return
+        }
+
+        activityTransitionTimer?.invalidate()
+        pendingActivityTransition = PendingActivityTransition(
+            activity: trackedActivity,
+            observedAt: observedAt
+        )
+
+        let timer = Timer(
+            timeInterval: AppConfig.activityTransitionDebounceInterval,
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.commitPendingActivityTransition()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        activityTransitionTimer = timer
+    }
+
+    private func commitPendingActivityTransition() {
+        // 1. 取出最终候选，并确认当前窗口身份仍然一致，避免延迟回调启动已经被切走的窗口。
+        guard let pendingActivityTransition else { return }
+        activityTransitionTimer?.invalidate()
+        activityTransitionTimer = nil
+        self.pendingActivityTransition = nil
+
+        guard currentSession == nil,
+              TrackedActivity(from: tracker)?.identity == pendingActivityTransition.activity.identity else {
+            return
+        }
+
+        // 2. 会话从最后一次真正切入该窗口的事件时间开始，而不是从防抖计时结束时开始，
+        // 因此只过滤中间过渡窗口，不会少算最终稳定窗口的前两秒。
+        startSession(
+            for: pendingActivityTransition.activity,
+            at: pendingActivityTransition.observedAt
+        )
+        updateDisplayedDurations(at: Date())
+    }
+
+    private func cancelPendingActivityTransition() {
+        activityTransitionTimer?.invalidate()
+        activityTransitionTimer = nil
+        pendingActivityTransition = nil
+    }
+
+    private func updatedSession(
+        _ currentSession: ActiveSession,
+        with trackedActivity: TrackedActivity
+    ) -> ActiveSession {
+        ActiveSession(
+            identity: currentSession.identity,
+            startDate: currentSession.startDate,
+            appName: trackedActivity.appName,
+            groupedTitle: trackedActivity.groupedTitle,
+            domain: trackedActivity.domain,
+            bilibiliIdentifier: trackedActivity.bilibiliIdentifier,
+            bilibiliTidV2: trackedActivity.bilibiliTidV2,
+            fullUrl: trackedActivity.fullUrl,
+            pdfIdentifier: trackedActivity.pdfIdentifier
+        )
     }
 
     /// 标记未绑定唯一指纹的历史 PDF 日志，以便重命名后仍然可以从历史累加时长中检索出
@@ -569,6 +662,11 @@ private struct ActiveSession {
     let bilibiliTidV2: Int?
     let fullUrl: String?
     let pdfIdentifier: String?
+}
+
+private struct PendingActivityTransition {
+    let activity: TrackedActivity
+    let observedAt: Date
 }
 
 private struct DurationBaseline {

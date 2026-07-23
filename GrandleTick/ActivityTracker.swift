@@ -25,7 +25,6 @@ final class ActivityTracker {
     static var bilibiliIdToMainTitleCache: [String: String] = [:]
     private static var bilibiliMetadataCache: [String: BilibiliVideoMetadata] = [:]
 
-    private var lastTrackAt: Date = .distantPast
     private var lastBrowserURLRefreshAt: Date = .distantPast
     private var lastTrustCheckAt: Date = .distantPast
     private var cachedAccessibilityTrusted = false
@@ -77,12 +76,9 @@ final class ActivityTracker {
     }
 
     func track(forceRefresh: Bool = false) {
-        // 1. 先用轻量节流保护兜底轮询路径；事件触发会传 forceRefresh，不能被节流挡住。
+        // 1. 每次调用都来自应用切换、焦点窗口变化或标题变化事件，必须立即读取新状态。
+        // 这里不能做时间节流，否则用户快速切窗时事件会被丢弃，导致旧会话被多记数秒。
         let now = Date()
-        if !forceRefresh && now.timeIntervalSince(lastTrackAt) < AppConfig.trackInterval {
-            return
-        }
-        lastTrackAt = now
 
         // 2. 辅助功能权限可能在系统设置里被用户改掉，事件驱动也需要定期重新确认。
         if now.timeIntervalSince(lastTrustCheckAt) >= AppConfig.trustRefreshInterval {
