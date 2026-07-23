@@ -155,10 +155,21 @@ final class StatusBarController: NSObject {
         popover.contentViewController = NSHostingController(
             rootView: ContentView(
                 usageManager: usageManager,
-                breakReminderManager: breakReminderManager
+                breakReminderManager: breakReminderManager,
+                onBreakTimerExpansionChanged: { [weak self] isExpanded in
+                    self?.updatePopoverHeight(isBreakTimerExpanded: isExpanded)
+                }
             )
                 .modelContext(modelContext)
         )
+    }
+
+    private func updatePopoverHeight(isBreakTimerExpanded: Bool) {
+        // 休息功能默认不占菜单主体空间；仅在用户主动展开时临时增高弹层。
+        let height = isBreakTimerExpanded
+            ? AppConfig.expandedPopoverHeight
+            : AppConfig.popoverHeight
+        popover.contentSize = NSSize(width: AppConfig.popoverWidth, height: height)
     }
 
     private func installPopoverCloseHandlers() {

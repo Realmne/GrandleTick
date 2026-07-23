@@ -6,8 +6,10 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var usageManager: UsageManager
     var breakReminderManager: BreakReminderManager
+    var onBreakTimerExpansionChanged: (Bool) -> Void
 
     @State private var contentVisible = false
+    @State private var isBreakTimerExpanded = false
     
     private let requiredConfirmText = "我已知晓"
     
@@ -106,14 +108,8 @@ struct ContentView: View {
                 StatusPill(
                     text: isUntracked ? "已暂停统计" : (isStudyActive ? "学习中" : "休闲中"),
                     tint: activityTint,
-                    systemImage: isUntracked ? "pause.fill" : (isStudyActive ? "book.fill" : "gamecontroller.fill")
+                    systemImage: isUntracked ? "pause.circle.fill" : (isStudyActive ? "book.closed.fill" : "gamecontroller.fill")
                 )
-
-                Image(systemName: isUntracked ? "pause.circle.fill" : (isStudyActive ? "book.closed.fill" : "gamecontroller.fill"))
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(activityTint)
-                    .frame(width: 28, height: 28)
-                    .contentTransition(.symbolEffect(.replace))
 
                 VStack(spacing: 6) {
                     Text(currentTitle)
@@ -161,9 +157,22 @@ struct ContentView: View {
             )
             
             VStack(alignment: .center, spacing: 8) {
-                Text(durationHeadline)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                ZStack {
+                    Text(durationHeadline)
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .center)
+
+                    HStack {
+                        Spacer()
+
+                        BreakTimerIconButton(
+                            isExpanded: isBreakTimerExpanded,
+                            isScheduled: breakReminderManager.isScheduled,
+                            action: toggleBreakTimerExpansion
+                        )
+                    }
+                }
 
                 Text(usageManager.formattedPopoverDuration)
                     .font(.system(size: 36, weight: .bold, design: .monospaced))
@@ -187,7 +196,15 @@ struct ContentView: View {
                     .fill(AppDesign.tintedSurface(activityTint, opacity: 0.12))
             )
 
-            BreakTimerControlView(reminderManager: breakReminderManager)
+            if isBreakTimerExpanded {
+                BreakTimerControlView(reminderManager: breakReminderManager)
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity
+                        )
+                    )
+            }
             
             VStack(spacing: 10) {
                 ActionCapsuleButton(
@@ -234,9 +251,19 @@ struct ContentView: View {
         .offset(y: reduceMotion || contentVisible ? 0 : 6)
         .animation(reduceMotion ? nil : AppDesign.animationCurve, value: isStudyActive)
         .onAppear {
+            onBreakTimerExpansionChanged(isBreakTimerExpanded)
             withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
                 contentVisible = true
             }
+        }
+    }
+
+    private func toggleBreakTimerExpansion() {
+        let newValue = !isBreakTimerExpanded
+        onBreakTimerExpansionChanged(newValue)
+
+        withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
+            isBreakTimerExpanded = newValue
         }
     }
     
@@ -284,6 +311,48 @@ struct ContentView: View {
         } catch {
             print("❌ [Database] 清空失败: \(error.localizedDescription)")
         }
+    }
+}
+
+private struct BreakTimerIconButton: View {
+    let isExpanded: Bool
+    let isScheduled: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "cup.and.saucer.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isScheduled ? AppDesign.successGreen : AppDesign.secondaryText)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        Circle()
+                            .fill(
+                                isScheduled
+                                    ? AppDesign.successGreen.opacity(isHovered ? 0.18 : 0.12)
+                                    : Color.primary.opacity(isHovered ? 0.10 : 0.055)
+                            )
+                    )
+
+                if isScheduled {
+                    Circle()
+                        .fill(AppDesign.successGreen)
+                        .frame(width: 7, height: 7)
+                        .overlay(Circle().stroke(AppDesign.appBackground, lineWidth: 1.5))
+                }
+            }
+            .rotationEffect(.degrees(isExpanded ? -6 : 0))
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help(isScheduled ? "查看正在进行的休息计时" : "设置定时休息")
+        .accessibilityLabel(isScheduled ? "查看正在进行的休息计时" : "设置定时休息")
+        .animation(AppDesign.animationCurve, value: isHovered)
+        .animation(AppDesign.animationCurve, value: isExpanded)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -383,15 +452,21 @@ private struct StatusPill: View {
     let systemImage: String
     
     var body: some View {
-        Label(text, systemImage: systemImage)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(tint)
-            .padding(.vertical, 5)
-            .padding(.horizontal, 9)
-            .background(
-                Capsule()
-                    .fill(tint.opacity(0.12))
-            )
+        HStack(spacing: 6) {
+            Text(text)
+
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundColor(tint)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 9)
+        .background(
+            Capsule()
+                .fill(tint.opacity(0.12))
+        )
     }
 }
 

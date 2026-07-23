@@ -17,7 +17,8 @@ enum AppConfig {
 
     // MARK: - UI Defaults
     static let popoverWidth: CGFloat = 320
-    static let popoverHeight: CGFloat = 700
+    static let popoverHeight: CGFloat = 570
+    static let expandedPopoverHeight: CGFloat = 700
     static let statisticsWidth: CGFloat = 860
     static let statisticsHeight: CGFloat = 680
     static let breakReminderWidth: CGFloat = 360
