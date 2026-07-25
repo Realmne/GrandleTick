@@ -39,7 +39,9 @@ final class ActivityTracker {
     private var lastPublishedActivity: PublishedActivityState?
 
     init() {
-        cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: true)
+        // 启动阶段只静默读取授权状态，避免签名变化或系统权限状态异常时反复弹出授权窗口。
+        // 首次授权仍由界面的“前往开启辅助功能权限”按钮承接，确保提示来自用户主动操作。
+        cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: false)
         track(forceRefresh: true)
 
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(

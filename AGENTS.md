@@ -48,5 +48,7 @@ refactor: 优化数据迁移流程
 
 ## 更新后安装要求
 
-- 每次完成代码更新并验证后，必须退出当前运行中的 GrandleTick，覆盖安装新构建到 `/Applications/GrandleTick.app`，然后启动新版应用。
-- 覆盖安装前应确保构建产物来自当前已验证代码，避免把旧版本重新安装回应用目录。
+- 每次完成代码更新并验证后，必须运行 `Scripts/build_and_install_release.sh`。该脚本负责退出当前运行中的 GrandleTick、构建 Release、严格验签、完整覆盖安装到 `/Applications/GrandleTick.app`，然后启动新版应用。
+- 禁止把签名失败的构建产物复制到 `/Applications`，禁止使用 `CODE_SIGNING_ALLOWED=NO` 绕过签名，也禁止只覆盖 `.app` 内部的可执行文件。
+- 构建产物必须通过 `codesign --verify --deep --strict`，并确认 `TeamIdentifier` 为 `7PDMGBAPNH` 且不是 ad-hoc 签名；任一条件不满足时必须停止安装。
+- Release 构建目录必须位于不受 File Provider 影响的系统临时目录，避免 `FinderInfo`、资源分叉等扩展属性导致开发者签名失败。
