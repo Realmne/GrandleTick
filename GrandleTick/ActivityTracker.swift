@@ -50,9 +50,9 @@ final class ActivityTracker {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                // App 激活是系统能直接给到的最快信号；这里强制刷新，
-                // 让上层 UsageManager 不必等下一次计时器 tick 才切换会话。
-                self?.track(forceRefresh: true)
+                // 用户可能刚在系统设置里授予或撤销权限；应用切换是可靠且低频的刷新时机，
+                // 这里绕过 60 秒缓存，但不影响标题变化等高频事件的性能。
+                self?.refreshAccessibilityTrust()
             }
         }
     }
@@ -77,12 +77,21 @@ final class ActivityTracker {
         return AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
 
+    func refreshAccessibilityTrust() {
+        // 1. 用户主动回到菜单或切换应用时立即读取系统状态，避免授权成功后仍显示旧缓存。
+        cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: false)
+        lastTrustCheckAt = Date()
+
+        // 2. 使用刚更新的权限状态重新识别前台窗口；track 内的低频兜底检查会因时间戳更新而跳过。
+        track(forceRefresh: true)
+    }
+
     func track(forceRefresh: Bool = false) {
         // 1. 每次调用都来自应用切换、焦点窗口变化或标题变化事件，必须立即读取新状态。
         // 这里不能做时间节流，否则用户快速切窗时事件会被丢弃，导致旧会话被多记数秒。
         let now = Date()
 
-        // 2. 辅助功能权限可能在系统设置里被用户改掉，事件驱动也需要定期重新确认。
+        // 2. 低频检查作为权限变化的兜底；用户可见的应用切换和菜单打开路径会主动绕过缓存。
         if now.timeIntervalSince(lastTrustCheckAt) >= AppConfig.trustRefreshInterval {
             cachedAccessibilityTrusted = checkAccessibilityPermissions(prompt: false)
             lastTrustCheckAt = now

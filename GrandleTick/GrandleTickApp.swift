@@ -243,6 +243,9 @@ final class StatusBarController: NSObject {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            // 用户通常会在系统设置授权后立即点击菜单栏图标返回；
+            // 展示弹层前强制刷新权限，避免界面继续使用最长 60 秒的旧缓存。
+            usageManager.tracker.refreshAccessibilityTrust()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.animationBehavior = .none
         }
