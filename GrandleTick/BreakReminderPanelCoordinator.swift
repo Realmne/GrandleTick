@@ -97,7 +97,7 @@ private struct BreakReminderView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .center, spacing: 14) {
             Image(systemName: "cup.and.saucer.fill")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(AppDesign.successGreen)
@@ -121,8 +121,6 @@ private struct BreakReminderView: View {
                 }
                 .padding(.top, 3)
             }
-
-            Spacer(minLength: 0)
         }
         .padding(18)
         .frame(width: AppConfig.breakReminderWidth, height: AppConfig.breakReminderHeight)

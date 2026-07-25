@@ -197,7 +197,10 @@ struct ContentView: View {
             )
 
             if isBreakTimerExpanded {
-                BreakTimerControlView(reminderManager: breakReminderManager)
+                BreakTimerControlView(
+                    reminderManager: breakReminderManager,
+                    onReminderScheduled: collapseBreakTimer
+                )
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .top)),
@@ -256,14 +259,34 @@ struct ContentView: View {
                 contentVisible = true
             }
         }
+        .onChange(of: breakReminderManager.isScheduled) { _, isScheduled in
+            // 计时可能由菜单预设、自定义输入或提醒“延后”触发；统一在开始后恢复紧凑布局。
+            if isScheduled {
+                collapseBreakTimer()
+            }
+        }
     }
 
     private func toggleBreakTimerExpansion() {
         let newValue = !isBreakTimerExpanded
+        if !newValue {
+            collapseBreakTimer()
+            return
+        }
+
         onBreakTimerExpansionChanged(newValue)
 
         withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
             isBreakTimerExpanded = newValue
+        }
+    }
+
+    private func collapseBreakTimer() {
+        guard isBreakTimerExpanded else { return }
+        onBreakTimerExpansionChanged(false)
+
+        withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
+            isBreakTimerExpanded = false
         }
     }
     
@@ -358,6 +381,7 @@ private struct BreakTimerIconButton: View {
 
 private struct BreakTimerControlView: View {
     let reminderManager: BreakReminderManager
+    let onReminderScheduled: () -> Void
     @State private var customMinutes = "45"
 
     private var parsedCustomMinutes: Int? {
@@ -407,6 +431,7 @@ private struct BreakTimerControlView: View {
                     ForEach([25, 45, 60], id: \.self) { minutes in
                         Button("\(minutes) 分钟") {
                             reminderManager.schedule(minutes: minutes)
+                            onReminderScheduled()
                         }
                         .buttonStyle(AppCapsuleButtonStyle(role: .secondary, compact: true))
                         .frame(maxWidth: .infinity)
@@ -443,6 +468,7 @@ private struct BreakTimerControlView: View {
     private func startCustomReminder() {
         guard let parsedCustomMinutes else { return }
         reminderManager.schedule(minutes: parsedCustomMinutes)
+        onReminderScheduled()
     }
 }
 
