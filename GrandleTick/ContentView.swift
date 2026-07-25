@@ -167,7 +167,6 @@ struct ContentView: View {
                         Spacer()
 
                         BreakTimerIconButton(
-                            isExpanded: isBreakTimerExpanded,
                             isScheduled: breakReminderManager.isScheduled,
                             action: toggleBreakTimerExpansion
                         )
@@ -201,12 +200,6 @@ struct ContentView: View {
                     reminderManager: breakReminderManager,
                     onReminderScheduled: collapseBreakTimer
                 )
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .move(edge: .top)),
-                            removal: .opacity
-                        )
-                    )
             }
             
             VStack(spacing: 10) {
@@ -274,20 +267,16 @@ struct ContentView: View {
             return
         }
 
+        // 弹层高度变化本身会触发 AppKit 重新布局；这里保持同步切换，避免再叠加 SwiftUI
+        // 弹簧位移后出现两套几何动画互相拉扯。
+        isBreakTimerExpanded = newValue
         onBreakTimerExpansionChanged(newValue)
-
-        withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
-            isBreakTimerExpanded = newValue
-        }
     }
 
     private func collapseBreakTimer() {
         guard isBreakTimerExpanded else { return }
+        isBreakTimerExpanded = false
         onBreakTimerExpansionChanged(false)
-
-        withAnimation(reduceMotion ? nil : AppDesign.springAnimation) {
-            isBreakTimerExpanded = false
-        }
     }
     
     func openWhitelistWindow() {
@@ -338,7 +327,6 @@ struct ContentView: View {
 }
 
 private struct BreakTimerIconButton: View {
-    let isExpanded: Bool
     let isScheduled: Bool
     let action: () -> Void
 
@@ -367,14 +355,12 @@ private struct BreakTimerIconButton: View {
                         .overlay(Circle().stroke(AppDesign.appBackground, lineWidth: 1.5))
                 }
             }
-            .rotationEffect(.degrees(isExpanded ? -6 : 0))
         }
         .buttonStyle(.plain)
         .focusable(false)
         .help(isScheduled ? "查看正在进行的休息计时" : "设置定时休息")
         .accessibilityLabel(isScheduled ? "查看正在进行的休息计时" : "设置定时休息")
         .animation(AppDesign.animationCurve, value: isHovered)
-        .animation(AppDesign.animationCurve, value: isExpanded)
         .onHover { isHovered = $0 }
     }
 }
