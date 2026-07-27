@@ -77,16 +77,22 @@ final class UsageManager {
     // 1. 处理纯展示计时器。
     // 每秒只根据当前会话的两个时间戳派生展示值，不访问辅助功能，也不重新识别前台窗口。
     private func handleDisplayTick(at now: Date) {
-        // 1. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
+        // 1. 防抖确认期间仍按候选窗口的历史基准刷新界面，让用户从切入窗口的第一帧就看到正确累计值。
+        if currentSession == nil, pendingActivityTransition != nil {
+            updatePendingDisplayedDurations(at: now)
+            return
+        }
+
+        // 2. 当前没有可统计对象时只刷新菜单栏，避免把空窗口或未授权状态计入时长。
         guard currentSession != nil else {
             publishMenuBarTitle()
             return
         }
 
-        // 2. 展示值由当前时刻减会话开始时刻派生出来，计时精度与 Timer 实际触发时刻无关。
+        // 3. 展示值由当前时刻减会话开始时刻派生出来，计时精度与 Timer 实际触发时刻无关。
         updateDisplayedDurations(at: now)
 
-        // 3. 每分钟更新一次当前日志仅用于崩溃恢复；正常窗口切换仍由事件路径立即结算并保存。
+        // 4. 每分钟更新一次当前日志仅用于崩溃恢复；正常窗口切换仍由事件路径立即结算并保存。
         if persistedLogNeedsCreation {
             createPersistedLog(endDate: now)
         } else if shouldPersistSession(at: now) {
@@ -112,14 +118,10 @@ final class UsageManager {
         if currentSession != nil {
             persistCurrentSession(forceSave: true, endDate: now)
             clearSessionState()
-            setDisplayedDurations(
-                currentActivityToday: 0,
-                categoryToday: 0,
-                contentHistorical: 0
-            )
         }
 
-        // 3. 新窗口先进入候选状态；若用户继续快速切换，只替换候选，不为中间窗口创建数据库会话。
+        // 3. 新窗口先进入候选状态，但立即加载它的展示基准；若用户继续快速切换，
+        // 只替换候选且不创建数据库会话，同时界面也不会在防抖期间闪回 00分00秒。
         queuePendingActivityTransition(trackedActivity, observedAt: now)
     }
 
@@ -208,6 +210,11 @@ final class UsageManager {
     ) {
         guard let trackedActivity else {
             cancelPendingActivityTransition()
+            setDisplayedDurations(
+                currentActivityToday: 0,
+                categoryToday: 0,
+                contentHistorical: 0
+            )
             return
         }
 
@@ -216,17 +223,31 @@ final class UsageManager {
            pendingActivityTransition.activity.identity == trackedActivity.identity {
             self.pendingActivityTransition = PendingActivityTransition(
                 activity: trackedActivity,
-                observedAt: pendingActivityTransition.observedAt
+                observedAt: pendingActivityTransition.observedAt,
+                baseline: pendingActivityTransition.baseline,
+                todayStudyDuration: pendingActivityTransition.todayStudyDuration,
+                todayEntertainmentDuration: pendingActivityTransition.todayEntertainmentDuration
             )
+            updatePendingDisplayedDurations(at: observedAt)
             return
         }
+
+        // 1. 候选阶段只读取展示基准，不建立正式会话或数据库记录；
+        // 这样既保留快速切窗过滤策略，又能立即呈现新窗口已有的累计时长。
+        let baseline = loadBaselineDurations(for: trackedActivity.identity, now: observedAt)
+        let todayTotals = loadTodayTotalDurations(now: observedAt)
 
         activityTransitionTimer?.invalidate()
         pendingActivityTransition = PendingActivityTransition(
             activity: trackedActivity,
-            observedAt: observedAt
+            observedAt: observedAt,
+            baseline: baseline,
+            todayStudyDuration: todayTotals.study,
+            todayEntertainmentDuration: todayTotals.entertainment
         )
+        updatePendingDisplayedDurations(at: observedAt)
 
+        // 2. 只有候选窗口稳定超过防抖时间后才建立正式会话，避免为切换途中的窗口写入短记录。
         let timer = Timer(
             timeInterval: AppConfig.activityTransitionDebounceInterval,
             repeats: false
@@ -398,6 +419,30 @@ final class UsageManager {
         )
     }
 
+    private func updatePendingDisplayedDurations(at date: Date) {
+        guard let pendingActivityTransition else { return }
+
+        // 1. 候选展示从真实切入时刻开始递增，防抖只延迟落库，不延迟用户看到计时。
+        let duration = max(0, date.timeIntervalSince(pendingActivityTransition.observedAt))
+        let currentActivityToday = pendingActivityTransition.baseline.today + duration
+
+        // 2. 今日分类总时长按候选窗口的分类口径选择对应基准，避免先显示 0 再跳到历史累计值。
+        let categoryToday = isStudyActivity(pendingActivityTransition.activity)
+            ? pendingActivityTransition.todayStudyDuration + duration
+            : pendingActivityTransition.todayEntertainmentDuration + duration
+
+        // 3. PDF 和知识视频在候选阶段同样展示内容级历史累计，正式会话建立后数值可无缝衔接。
+        let contentHistorical = contentDurationLabel(for: pendingActivityTransition.activity) == nil
+            ? 0
+            : pendingActivityTransition.baseline.historical + duration
+
+        setDisplayedDurations(
+            currentActivityToday: currentActivityToday,
+            categoryToday: categoryToday,
+            contentHistorical: contentHistorical
+        )
+    }
+
     // 5. 从数据库加载基准时长，用于今日和历史统计显示。
     private func loadBaselineDurations(for identity: SessionIdentity, now: Date) -> DurationBaseline {
         guard let context = modelContext else { return .zero }
@@ -481,17 +526,43 @@ final class UsageManager {
     }
 
     var currentContentDurationLabel: String? {
-        guard let currentSession else { return nil }
+        if let currentSession {
+            return contentDurationLabel(
+                appName: currentSession.appName,
+                groupedTitle: currentSession.groupedTitle,
+                domain: currentSession.domain,
+                bilibiliIdentifier: currentSession.bilibiliIdentifier
+            )
+        }
 
-        let lowercasedAppName = currentSession.appName.lowercased()
+        guard let pendingActivityTransition else { return nil }
+        return contentDurationLabel(for: pendingActivityTransition.activity)
+    }
+
+    private func contentDurationLabel(for activity: TrackedActivity) -> String? {
+        contentDurationLabel(
+            appName: activity.appName,
+            groupedTitle: activity.groupedTitle,
+            domain: activity.domain,
+            bilibiliIdentifier: activity.bilibiliIdentifier
+        )
+    }
+
+    private func contentDurationLabel(
+        appName: String,
+        groupedTitle: String,
+        domain: String?,
+        bilibiliIdentifier: String?
+    ) -> String? {
+        let lowercasedAppName = appName.lowercased()
         let isPreview = lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview")
-        if isPreview && currentSession.groupedTitle.lowercased().contains(".pdf") {
+        if isPreview && groupedTitle.lowercased().contains(".pdf") {
             return "当前内容累计"
         }
 
         // 娱乐视频当前不会保存 BV 号，否则现有分类逻辑会把它误判为学习；
         // 因此这里只为具备稳定 BV 标识的知识视频展示可精确汇总的时长。
-        if currentSession.domain == "bilibili.com", currentSession.bilibiliIdentifier != nil {
+        if domain == "bilibili.com", bilibiliIdentifier != nil {
             return "当前内容累计"
         }
 
@@ -503,10 +574,34 @@ final class UsageManager {
     // 1. 用于判定当前活跃的会话是否属于专注学习分类。
     // 这与 ContentView.isStudyActive 和 PreparedLog.isStudy 保持完全一致的底层分类口径。
     var isCurrentSessionStudy: Bool {
-        guard let currentSession = currentSession else { return false }
-        let appName = currentSession.appName
-        let windowTitle = currentSession.groupedTitle
-        let domain = currentSession.domain
+        if let currentSession {
+            return isStudyActivity(
+                appName: currentSession.appName,
+                windowTitle: currentSession.groupedTitle,
+                domain: currentSession.domain,
+                bilibiliIdentifier: currentSession.bilibiliIdentifier
+            )
+        }
+
+        guard let pendingActivityTransition else { return false }
+        return isStudyActivity(pendingActivityTransition.activity)
+    }
+
+    private func isStudyActivity(_ activity: TrackedActivity) -> Bool {
+        isStudyActivity(
+            appName: activity.appName,
+            windowTitle: activity.groupedTitle,
+            domain: activity.domain,
+            bilibiliIdentifier: activity.bilibiliIdentifier
+        )
+    }
+
+    private func isStudyActivity(
+        appName: String,
+        windowTitle: String,
+        domain: String?,
+        bilibiliIdentifier: String?
+    ) -> Bool {
         
         let lowercasedAppName = appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
@@ -518,7 +613,7 @@ final class UsageManager {
             
             // B 站视频必须通过 API 确认为知识区得到的 identifier 作为唯一分类依据，避免 URL 兜底逻辑错误分类。
             if domain == "bilibili.com" {
-                return currentSession.bilibiliIdentifier != nil
+                return bilibiliIdentifier != nil
             }
             
             return isWhitelistedDomain
@@ -667,6 +762,9 @@ private struct ActiveSession {
 private struct PendingActivityTransition {
     let activity: TrackedActivity
     let observedAt: Date
+    let baseline: DurationBaseline
+    let todayStudyDuration: TimeInterval
+    let todayEntertainmentDuration: TimeInterval
 }
 
 private struct DurationBaseline {
