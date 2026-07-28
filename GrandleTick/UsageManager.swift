@@ -14,11 +14,15 @@ final class UsageManager {
 
     private var displayTimer: Timer?
     private var activityTransitionTimer: Timer?
+    private var untrackedDisplayTimer: Timer?
     private var pendingActivityTransition: PendingActivityTransition?
     private var currentSession: ActiveSession?
     private var currentPersistedLog: ActivityLog?
     private var currentBaselineTodayDuration: TimeInterval = 0
     private var currentBaselineHistoricalDuration: TimeInterval = 0
+    private var durationBaselineCache: [SessionIdentity: CachedDurationBaseline] = [:]
+    private var durationBaselineCacheOrder: [SessionIdentity] = []
+    private var todayCategoryDurationCache: TodayCategoryDurationCache?
     
     // 今日累计的学习和娱乐时长基准（不包含当前正在进行的会话），用于在弹窗大字中展现今日分类总时长。
     private var todayBaselineStudyDuration: TimeInterval = 0
@@ -33,6 +37,12 @@ final class UsageManager {
         startSessionIfNeeded(at: Date())
         startDisplayTimer()
         publishMenuBarTitle()
+
+        // 菜单栏完成首帧初始化后再预热近期高频对象，避免延长应用创建和状态栏出现的关键路径。
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.prewarmDurationCache(at: Date())
+        }
     }
 
     func startDisplayTimer() {
@@ -59,7 +69,9 @@ final class UsageManager {
     func restartTrackingAfterHistoryDeletion(at restartDate: Date = Date()) {
         // 1. 丢弃指向已删除日志的会话状态和所有旧基准。
         cancelPendingActivityTransition()
+        cancelUntrackedDisplayReset()
         clearSessionState()
+        clearDurationCaches()
 
         // 2. 立即清空三个展示口径，确保界面不会短暂残留旧数值。
         setDisplayedDurations(
@@ -191,12 +203,12 @@ final class UsageManager {
         }
 
         // 1. 加载当前具体活动的今日和历史基准，用于菜单栏展示。
-        let baseline = loadBaselineDurations(for: trackedActivity.identity, now: startDate)
+        let baseline = baselineDurations(for: trackedActivity.identity, now: startDate)
         currentBaselineTodayDuration = baseline.today
         currentBaselineHistoricalDuration = baseline.historical
 
         // 2. 加载今天整天已入库的学习与娱乐总时长，用作弹窗累计值的基座。
-        let todayTotals = loadTodayTotalDurations(now: startDate)
+        let todayTotals = todayTotalDurations(now: startDate)
         todayBaselineStudyDuration = todayTotals.study
         todayBaselineEntertainmentDuration = todayTotals.entertainment
 
@@ -209,14 +221,13 @@ final class UsageManager {
         observedAt: Date
     ) {
         guard let trackedActivity else {
+            // AX 在应用刚激活、窗口尚未就绪以及 B 站元数据读取期间可能短暂发布空状态。
+            // 此时冻结上一帧，确认持续为空后才切到 0，避免系统过渡事件直接暴露给用户。
             cancelPendingActivityTransition()
-            setDisplayedDurations(
-                currentActivityToday: 0,
-                categoryToday: 0,
-                contentHistorical: 0
-            )
+            scheduleUntrackedDisplayReset()
             return
         }
+        cancelUntrackedDisplayReset()
 
         // 同一候选身份的异步元数据补全不算再次切窗：更新内容即可，保留最初切入该窗口的时间戳。
         if let pendingActivityTransition,
@@ -232,10 +243,10 @@ final class UsageManager {
             return
         }
 
-        // 1. 候选阶段只读取展示基准，不建立正式会话或数据库记录；
-        // 这样既保留快速切窗过滤策略，又能立即呈现新窗口已有的累计时长。
-        let baseline = loadBaselineDurations(for: trackedActivity.identity, now: observedAt)
-        let todayTotals = loadTodayTotalDurations(now: observedAt)
+        // 1. 候选阶段优先读取内存基准；只有冷门对象首次出现时才访问数据库。
+        // 这里仍不建立正式会话或记录，因此快速切窗过滤策略保持不变。
+        let baseline = baselineDurations(for: trackedActivity.identity, now: observedAt)
+        let todayTotals = todayTotalDurations(now: observedAt)
 
         activityTransitionTimer?.invalidate()
         pendingActivityTransition = PendingActivityTransition(
@@ -285,6 +296,32 @@ final class UsageManager {
         activityTransitionTimer?.invalidate()
         activityTransitionTimer = nil
         pendingActivityTransition = nil
+    }
+
+    private func scheduleUntrackedDisplayReset() {
+        untrackedDisplayTimer?.invalidate()
+
+        let timer = Timer(
+            timeInterval: AppConfig.activityTransitionDebounceInterval,
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, TrackedActivity(from: self.tracker) == nil else { return }
+                self.untrackedDisplayTimer = nil
+                self.setDisplayedDurations(
+                    currentActivityToday: 0,
+                    categoryToday: 0,
+                    contentHistorical: 0
+                )
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        untrackedDisplayTimer = timer
+    }
+
+    private func cancelUntrackedDisplayReset() {
+        untrackedDisplayTimer?.invalidate()
+        untrackedDisplayTimer = nil
     }
 
     private func updatedSession(
@@ -376,6 +413,10 @@ final class UsageManager {
             currentPersistedLog.pdfIdentifier = currentSession.pdfIdentifier
             try? context.save()
         }
+
+        // 数据库中的当前记录可能每分钟更新一次；缓存始终覆盖成“会话基准 + 当前总时长”，
+        // 不能在每次保存时做增量相加，否则同一会话会被重复累计。
+        updateDurationCaches(for: currentSession, sessionDuration: finalDuration, at: endDate)
     }
 
     private func clearSessionState() {
@@ -441,6 +482,140 @@ final class UsageManager {
             categoryToday: categoryToday,
             contentHistorical: contentHistorical
         )
+    }
+
+    private func baselineDurations(for identity: SessionIdentity, now: Date) -> DurationBaseline {
+        let dayStart = Calendar.current.startOfDay(for: now)
+
+        // 1. 同一天内直接复用完整基准；跨日后历史累计仍有效，只需把该对象的今日累计重置。
+        if let cached = durationBaselineCache[identity] {
+            let baseline = cached.dayStart == dayStart
+                ? cached.baseline
+                : DurationBaseline(today: 0, historical: cached.baseline.historical)
+            cacheDurationBaseline(baseline, for: identity, dayStart: dayStart)
+            return baseline
+        }
+
+        // 2. 冷门对象首次出现时才按既有身份规则查询数据库，随后加入本次运行的内存缓存。
+        let baseline = loadBaselineDurations(for: identity, now: now)
+        cacheDurationBaseline(baseline, for: identity, dayStart: dayStart)
+        return baseline
+    }
+
+    private func todayTotalDurations(now: Date) -> (study: TimeInterval, entertainment: TimeInterval) {
+        let dayStart = Calendar.current.startOfDay(for: now)
+        let whitelistKey = WhitelistCacheKey(whitelist: WhitelistManager.shared)
+
+        // 白名单会改变学习/休闲分类；只有日期和白名单都一致时才能复用分类总时长。
+        if let cached = todayCategoryDurationCache,
+           cached.dayStart == dayStart,
+           cached.whitelistKey == whitelistKey {
+            return (cached.study, cached.entertainment)
+        }
+
+        let totals = loadTodayTotalDurations(now: now)
+        todayCategoryDurationCache = TodayCategoryDurationCache(
+            dayStart: dayStart,
+            whitelistKey: whitelistKey,
+            study: totals.study,
+            entertainment: totals.entertainment
+        )
+        return totals
+    }
+
+    private func updateDurationCaches(
+        for session: ActiveSession,
+        sessionDuration: TimeInterval,
+        at date: Date
+    ) {
+        let dayStart = Calendar.current.startOfDay(for: date)
+
+        // 1. 当前对象的缓存采用会话开始前基准加本次会话总时长，保证下次切回时无需重新查库。
+        let baseline = DurationBaseline(
+            today: currentBaselineTodayDuration + sessionDuration,
+            historical: currentBaselineHistoricalDuration + sessionDuration
+        )
+        cacheDurationBaseline(baseline, for: session.identity, dayStart: dayStart)
+
+        // 2. 同步更新今日学习/休闲总量缓存，让切到任意对象时都能直接显示最新分类累计。
+        let categoryTotals = isStudyActivity(
+            appName: session.appName,
+            windowTitle: session.groupedTitle,
+            domain: session.domain,
+            bilibiliIdentifier: session.bilibiliIdentifier
+        )
+            ? (study: todayBaselineStudyDuration + sessionDuration, entertainment: todayBaselineEntertainmentDuration)
+            : (study: todayBaselineStudyDuration, entertainment: todayBaselineEntertainmentDuration + sessionDuration)
+        todayCategoryDurationCache = TodayCategoryDurationCache(
+            dayStart: dayStart,
+            whitelistKey: WhitelistCacheKey(whitelist: WhitelistManager.shared),
+            study: categoryTotals.study,
+            entertainment: categoryTotals.entertainment
+        )
+    }
+
+    private func cacheDurationBaseline(
+        _ baseline: DurationBaseline,
+        for identity: SessionIdentity,
+        dayStart: Date
+    ) {
+        // 1. 每次命中都把对象移到队尾，使容量不足时优先淘汰最久未使用的冷门对象。
+        durationBaselineCacheOrder.removeAll { $0 == identity }
+        durationBaselineCacheOrder.append(identity)
+        durationBaselineCache[identity] = CachedDurationBaseline(
+            baseline: baseline,
+            dayStart: dayStart
+        )
+
+        // 2. 缓存只服务当前运行期的快速切换；限制上限可避免内容级身份长期累积。
+        while durationBaselineCacheOrder.count > AppConfig.durationCacheLimit {
+            let evictedIdentity = durationBaselineCacheOrder.removeFirst()
+            durationBaselineCache.removeValue(forKey: evictedIdentity)
+        }
+    }
+
+    private func prewarmDurationCache(at now: Date) {
+        guard let context = modelContext else { return }
+
+        // 1. 只读取最近有限数量的记录，避免恢复此前被移除的“启动时扫描全部历史”行为。
+        var descriptor = FetchDescriptor<ActivityLog>(
+            sortBy: [SortDescriptor(\ActivityLog.startTime, order: .reverse)]
+        )
+        descriptor.fetchLimit = AppConfig.durationCacheRecentLogLimit
+        let recentLogs = (try? context.fetch(descriptor)) ?? []
+
+        // 2. 最近记录集合内先按出现次数衡量热度，同频时优先最近使用的对象。
+        var candidates: [SessionIdentity: DurationCacheCandidate] = [:]
+        for log in recentLogs {
+            let identity = SessionIdentity(log: log)
+            var candidate = candidates[identity] ?? DurationCacheCandidate(
+                count: 0,
+                lastUsedAt: log.startTime
+            )
+            candidate.count += 1
+            candidate.lastUsedAt = max(candidate.lastUsedAt, log.startTime)
+            candidates[identity] = candidate
+        }
+        let hotIdentities = candidates.sorted { lhs, rhs in
+            lhs.value.count == rhs.value.count
+                ? lhs.value.lastUsedAt > rhs.value.lastUsedAt
+                : lhs.value.count > rhs.value.count
+        }
+        .prefix(AppConfig.durationCachePrewarmLimit)
+        .map(\.key)
+
+        // 3. 当前对象通常已在初始化阶段进入缓存；其余热门对象各查询一次并保留在内存。
+        let dayStart = Calendar.current.startOfDay(for: now)
+        for identity in hotIdentities where durationBaselineCache[identity] == nil {
+            let baseline = loadBaselineDurations(for: identity, now: now)
+            cacheDurationBaseline(baseline, for: identity, dayStart: dayStart)
+        }
+    }
+
+    private func clearDurationCaches() {
+        durationBaselineCache.removeAll(keepingCapacity: false)
+        durationBaselineCacheOrder.removeAll(keepingCapacity: false)
+        todayCategoryDurationCache = nil
     }
 
     // 5. 从数据库加载基准时长，用于今日和历史统计显示。
@@ -712,6 +887,28 @@ private struct SessionIdentity: Hashable {
     let domain: String?
     let bilibiliIdentifier: String?
     let pdfIdentifier: String?
+
+    init(
+        appName: String,
+        groupedTitle: String,
+        domain: String?,
+        bilibiliIdentifier: String?,
+        pdfIdentifier: String?
+    ) {
+        self.appName = appName
+        self.groupedTitle = groupedTitle
+        self.domain = domain
+        self.bilibiliIdentifier = bilibiliIdentifier
+        self.pdfIdentifier = pdfIdentifier
+    }
+
+    init(log: ActivityLog) {
+        appName = log.appName
+        groupedTitle = log.windowTitle
+        domain = log.domain
+        bilibiliIdentifier = log.bilibiliIdentifier
+        pdfIdentifier = log.pdfIdentifier
+    }
 }
 
 private struct TrackedActivity {
@@ -772,4 +969,31 @@ private struct DurationBaseline {
     let historical: TimeInterval
 
     static let zero = DurationBaseline(today: 0, historical: 0)
+}
+
+private struct CachedDurationBaseline {
+    let baseline: DurationBaseline
+    let dayStart: Date
+}
+
+private struct TodayCategoryDurationCache {
+    let dayStart: Date
+    let whitelistKey: WhitelistCacheKey
+    let study: TimeInterval
+    let entertainment: TimeInterval
+}
+
+private struct WhitelistCacheKey: Equatable {
+    let apps: [String]
+    let domains: [String]
+
+    init(whitelist: WhitelistManager) {
+        apps = whitelist.whitelistedApps.map { $0.lowercased() }.sorted()
+        domains = whitelist.whitelistedDomains.map { $0.lowercased() }.sorted()
+    }
+}
+
+private struct DurationCacheCandidate {
+    var count: Int
+    var lastUsedAt: Date
 }

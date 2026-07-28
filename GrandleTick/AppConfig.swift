@@ -7,6 +7,11 @@ enum AppConfig {
     static let displayRefreshInterval: TimeInterval = 1
     // 快速切窗期间只保留最终稳定窗口，避免把寻找目标窗口的短暂停留计入统计。
     static let activityTransitionDebounceInterval: TimeInterval = 2
+    // 启动时只观察有限数量的近期记录，并预热其中最常用的一小组对象，避免恢复全历史扫描。
+    static let durationCacheRecentLogLimit = 256
+    static let durationCachePrewarmLimit = 12
+    // 长时间运行时限制内容级缓存规模，避免浏览大量网页或 PDF 后内存只增不减。
+    static let durationCacheLimit = 64
     static let browserURLRefreshInterval: TimeInterval = 15
     static let trustRefreshInterval: TimeInterval = 60
 
