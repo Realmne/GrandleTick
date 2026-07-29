@@ -252,6 +252,11 @@ struct ContentView: View {
                 contentVisible = true
             }
         }
+        .onDisappear {
+            // NSPopover 会复用同一个 HostingController；关闭时必须复位入场状态，
+            // 否则下次打开会直接绘制缓存界面，随后才切换为刷新后的正确内容。
+            contentVisible = false
+        }
         .onChange(of: breakReminderManager.isScheduled) { _, isScheduled in
             // 计时可能由菜单预设、自定义输入或提醒“延后”触发；统一在开始后恢复紧凑布局。
             if isScheduled {

@@ -111,6 +111,7 @@ final class StatusBarController: NSObject {
     private let popover = NSPopover()
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
+    private var pendingPopoverPresentation: DispatchWorkItem?
 
     init(
         usageManager: UsageManager,
@@ -240,14 +241,33 @@ final class StatusBarController: NSObject {
     private func togglePopover(_ sender: AnyObject?) {
         guard let button = statusItem.button else { return }
 
+        // 1. 如果弹层仍在等待下一轮主线程展示，再次点击应取消本次打开，保持菜单栏按钮的开关语义。
+        if let pendingPopoverPresentation {
+            pendingPopoverPresentation.cancel()
+            self.pendingPopoverPresentation = nil
+            return
+        }
+
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            // 2. 保留打开菜单时立即刷新权限与前台窗口的行为，避免系统设置授权后继续显示旧状态。
             // 用户通常会在系统设置授权后立即点击菜单栏图标返回；
             // 展示弹层前强制刷新权限，避免界面继续使用最长 60 秒的旧缓存。
             usageManager.tracker.refreshAccessibilityTrust()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.animationBehavior = .none
+
+            // 3. Observation 的状态写入是同步的，但 SwiftUI 视图重算发生在下一轮主线程。
+            // 延后到下一轮再展示，可避免弹层先绘制上一次的学习/休闲界面，再跳到刷新后的正确界面。
+            let presentation = DispatchWorkItem { [weak self, weak button] in
+                guard let self, let button else { return }
+                self.pendingPopoverPresentation = nil
+                guard !self.popover.isShown else { return }
+
+                self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                self.popover.contentViewController?.view.window?.animationBehavior = .none
+            }
+            pendingPopoverPresentation = presentation
+            DispatchQueue.main.async(execute: presentation)
         }
     }
 
@@ -261,6 +281,8 @@ final class StatusBarController: NSObject {
     }
 
     private func closePopover() {
+        pendingPopoverPresentation?.cancel()
+        pendingPopoverPresentation = nil
         guard popover.isShown else { return }
         popover.performClose(nil)
     }
