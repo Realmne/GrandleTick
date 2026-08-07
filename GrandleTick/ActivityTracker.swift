@@ -99,15 +99,16 @@ final class ActivityTracker {
 
         resetBrowserMetadata()
 
-        // 3. 获取前台最上层应用，若获取不到或为当前 App，则清理状态。
+        // 3. 获取前台最上层应用，若获取不到则清理状态；若为 GrandleTick 自身（弹出菜单栏弹层场景）则保留上次状态不变。
         guard let activeApp = NSWorkspace.shared.frontmostApplication else {
             removeActiveAppObserver()
             clearTrackedState()
             return
         }
         if activeApp.bundleIdentifier == Bundle.main.bundleIdentifier {
-            removeActiveAppObserver()
-            clearTrackedState()
+            // NSPopover（菜单栏弹层）弹出时系统会短暂把 GrandleTick 设为前台应用，
+            // 但这不代表用户真正切换了应用，应保留上次的追踪状态不变，
+            // 否则会导致学习会话被短暂中断并错误计入娱乐时间。
             return
         }
 
