@@ -238,15 +238,30 @@ final class ActivityTracker {
             }
         }
 
-        // 2. 非浏览器仍使用焦点窗口；浏览器取不到主窗口时也用它兜底，避免全屏切换期间停止统计。
+        // 2. 非浏览器优先用焦点窗口；浏览器取不到主窗口时也用它兜底，避免全屏切换期间停止统计。
         var focusedWindowRef: CFTypeRef?
         let focusedWindowResult = AXUIElementCopyAttributeValue(
             appElement,
             kAXFocusedWindowAttribute as CFString,
             &focusedWindowRef
         )
-        guard focusedWindowResult == .success else { return nil }
-        return focusedWindowRef as! AXUIElement?
+        if focusedWindowResult == .success, let focusedWindow = focusedWindowRef as! AXUIElement? {
+            return focusedWindow
+        }
+
+        // 3. 菜单栏 NSPopover 弹出时会抢走前台应用的窗口焦点，导致 kAXFocusedWindowAttribute
+        // 短暂失效。此时尝试用主窗口兜底，避免把瞬时焦点丢失误判为用户切走应用而清空会话。
+        var mainWindowRef: CFTypeRef?
+        let mainWindowResult = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXMainWindowAttribute as CFString,
+            &mainWindowRef
+        )
+        if mainWindowResult == .success, let mainWindow = mainWindowRef as! AXUIElement? {
+            return mainWindow
+        }
+
+        return nil
     }
 
     private func resolveBrowserSnapshot(
