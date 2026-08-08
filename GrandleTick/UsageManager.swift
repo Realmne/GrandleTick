@@ -127,12 +127,26 @@ final class UsageManager {
         }
 
         // 2. 一旦离开旧窗口就立即按事件时间结算，绝不能让后续寻找窗口的时间继续算在旧窗口上。
-        if currentSession != nil {
+        let hadActiveSession = currentSession != nil
+        if hadActiveSession {
             persistCurrentSession(forceSave: true, endDate: now)
             clearSessionState()
         }
 
-        // 3. 新窗口先进入候选状态，但立即加载它的展示基准；若用户继续快速切换，
+        // 3. 当用户从有效窗口切到了不可追踪状态（如系统应用、Finder 等），
+        // 且刚才确实有正在运行的会话被结算了，说明这是一次真实的窗口切走——
+        // 必须立即将显示计时归零，避免 UI 标题已变为"已暂停统计"但数值仍停留在旧会话的值。
+        // scheduleUntrackedDisplayReset 的 2 秒防抖是为了过滤 AX 框架在应用切换过渡中
+        // 短暂发布的空状态，此处绕过它以消除真实切换场景下的视觉滞后。
+        if hadActiveSession && trackedActivity == nil {
+            setDisplayedDurations(
+                currentActivityToday: 0,
+                categoryToday: 0,
+                contentHistorical: 0
+            )
+        }
+
+        // 4. 新窗口先进入候选状态，但立即加载它的展示基准；若用户继续快速切换，
         // 只替换候选且不创建数据库会话，同时界面也不会在防抖期间闪回 00分00秒。
         queuePendingActivityTransition(trackedActivity, observedAt: now)
     }
@@ -223,7 +237,17 @@ final class UsageManager {
         guard let trackedActivity else {
             // AX 在应用刚激活、窗口尚未就绪以及 B 站元数据读取期间可能短暂发布空状态。
             // 此时冻结上一帧，确认持续为空后才切到 0，避免系统过渡事件直接暴露给用户。
+            // 但如果刚才有候选窗口正在展示计时值，取消候选后必须立即清零，
+            // 否则显示值会冻结在候选窗口的旧值上直到 2 秒防抖超时。
+            let hadPending = pendingActivityTransition != nil
             cancelPendingActivityTransition()
+            if hadPending {
+                setDisplayedDurations(
+                    currentActivityToday: 0,
+                    categoryToday: 0,
+                    contentHistorical: 0
+                )
+            }
             scheduleUntrackedDisplayReset()
             return
         }
