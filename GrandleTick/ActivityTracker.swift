@@ -290,16 +290,19 @@ final class ActivityTracker {
             return
         }
 
+        // 同一浏览器窗口/标签页（processId + rawTitle 均未变）的缓存快照始终可复用，
+        // 因为标题不变意味着用户没有切标签页或导航到新页面。
+        // forceRefresh 只决定是否在后台重新获取 URL，不应丢弃已解析的有效快照——
+        // 否则会短暂发布 browserUrl=nil 的兜底状态，导致白名单域名识别失败，
+        // 把正在进行的学习会话瞬间误判为娱乐。
         if let lastResolvedSnapshot,
            lastResolvedSnapshot.processId == processId,
-           lastResolvedSnapshot.rawTitle == rawTitle,
-           !forceRefresh {
-            if now.timeIntervalSince(lastBrowserURLRefreshAt) < AppConfig.browserURLRefreshInterval {
-                applySnapshot(lastResolvedSnapshot)
-                return
+           lastResolvedSnapshot.rawTitle == rawTitle {
+            let needsRefresh = forceRefresh
+                || now.timeIntervalSince(lastBrowserURLRefreshAt) >= AppConfig.browserURLRefreshInterval
+            if needsRefresh {
+                scheduleBrowserURLRefresh(for: refreshKey)
             }
-
-            scheduleBrowserURLRefresh(for: refreshKey)
             applySnapshot(lastResolvedSnapshot)
             return
         }
