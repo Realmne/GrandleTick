@@ -221,7 +221,6 @@ struct ContentView: View {
                     title: "今日总结",
                     systemImage: "clock.arrow.circlepath",
                     tint: AppDesign.primaryBlue,
-                    isProminent: true,
                     action: openTodaySummaryWindow
                 )
 
@@ -505,7 +504,6 @@ private struct ActionCapsuleButton: View {
     let title: String
     let systemImage: String
     let tint: Color
-    var isProminent = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -522,11 +520,7 @@ private struct ActionCapsuleButton: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius)
-                    .fill(tint.opacity(backgroundOpacity))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius)
-                            .stroke(tint.opacity(isProminent ? 0.18 : 0), lineWidth: 1)
-                    )
+                    .fill(tint.opacity(isHovered ? 0.14 : 0.08))
             )
             .scaleEffect(isHovered ? 1.01 : 1)
         }
@@ -535,12 +529,5 @@ private struct ActionCapsuleButton: View {
         .focusEffectDisabled()
         .animation(AppDesign.animationCurve, value: isHovered)
         .onHover { isHovered = $0 }
-    }
-
-    private var backgroundOpacity: Double {
-        if isProminent {
-            return isHovered ? 0.22 : 0.15
-        }
-        return isHovered ? 0.14 : 0.08
     }
 }
