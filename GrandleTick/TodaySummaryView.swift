@@ -72,6 +72,8 @@ private struct TodayAppUsageAccumulator {
 }
 
 enum TodaySummaryBuilder {
+    private static let minimumVisibleDuration: TimeInterval = 60
+
     static func build(
         now: Date,
         whitelist: WhitelistSnapshot,
@@ -93,8 +95,6 @@ enum TodaySummaryBuilder {
         // 2. 把每条日志裁剪到今天，并在跨越整点时拆分到对应的自然小时。
         // 这样快速切换窗口只会增加小时块内的 App 用时，不会制造大量秒级时间线条目。
         var hourlyApps: [Date: [String: TodayAppUsageAccumulator]] = [:]
-        var studyDuration: TimeInterval = 0
-        var leisureDuration: TimeInterval = 0
 
         for log in logs {
             var segmentStart = max(log.startTime, dayStart)
@@ -117,21 +117,20 @@ enum TodaySummaryBuilder {
                 appUsage.add(log: log, duration: segmentDuration)
                 apps[usageIdentity] = appUsage
                 hourlyApps[hourInterval.start] = apps
-
-                if log.isStudy {
-                    studyDuration += segmentDuration
-                } else {
-                    leisureDuration += segmentDuration
-                }
                 segmentStart = segmentEnd
             }
         }
 
-        // 3. 每个小时内按 App 总用时降序排列，小时块则按最近优先展示。
+        // 3. 聚合完成后再过滤不足一分钟的 App 或网站，保留多次短暂切换累积出的有效用时。
+        // 如果整个小时都只包含零碎记录，则不创建空的时间块。
         var blocks: [TodayTimeBlock] = []
         for (hourStart, appAccumulators) in hourlyApps {
             guard let hourEnd = calendar.date(byAdding: .hour, value: 1, to: hourStart) else { continue }
-            var appUsages = appAccumulators.values.map { $0.build() }
+            var appUsages = appAccumulators.values
+                .map { $0.build() }
+                .filter { $0.duration >= minimumVisibleDuration }
+            guard !appUsages.isEmpty else { continue }
+
             appUsages.sort { lhs, rhs in
                 if lhs.duration == rhs.duration {
                     return lhs.displayName < rhs.displayName
@@ -149,6 +148,11 @@ enum TodaySummaryBuilder {
             ))
         }
         blocks.sort { $0.startTime > $1.startTime }
+
+        // 4. 顶部概览只统计最终可见条目，保证概览、时段总计和列表口径一致。
+        let visibleUsages = blocks.flatMap(\.appUsages)
+        let studyDuration = visibleUsages.reduce(TimeInterval.zero) { $0 + $1.studyDuration }
+        let leisureDuration = visibleUsages.reduce(TimeInterval.zero) { $0 + $1.leisureDuration }
 
         return TodaySummarySnapshot(
             blocks: blocks,
@@ -501,12 +505,20 @@ private struct TodayAppUsageRow: View {
     }
 
     private var categorySummary: String {
-        let hasStudy = usage.studyDuration >= 1
-        let hasLeisure = usage.leisureDuration >= 1
+        let hasStudy = usage.studyDuration >= 60
+        let hasLeisure = usage.leisureDuration >= 60
         if hasStudy && hasLeisure {
             return "学习 \(formatDuration(usage.studyDuration)) · 休闲 \(formatDuration(usage.leisureDuration))"
         }
-        return hasStudy ? "学习" : "休闲"
+        if hasStudy {
+            return "学习"
+        }
+        if hasLeisure {
+            return "休闲"
+        }
+
+        // 总用时已达到一分钟但分类片段都很短时，仅展示占比更高的分类，避免再次出现“不足1分钟”。
+        return usage.studyDuration >= usage.leisureDuration ? "学习" : "休闲"
     }
 }
 
