@@ -1,33 +1,83 @@
 import SwiftUI
 
-struct TodayTimelineEntry: Identifiable, Sendable {
-    let id: String
-    let appName: String
-    let title: String
-    let subtitle: String?
+struct TodayAppUsage: Identifiable, Sendable {
+    let identity: String
+    let displayName: String
+    let sourceName: String?
+    let duration: TimeInterval
+    let studyDuration: TimeInterval
+    let leisureDuration: TimeInterval
+    let detailSummary: String?
+
+    var id: String { identity }
+}
+
+struct TodayTimeBlock: Identifiable, Sendable {
     let startTime: Date
     let endTime: Date
-    let duration: TimeInterval
-    let isStudy: Bool
+    let totalDuration: TimeInterval
+    let appUsages: [TodayAppUsage]
+
+    var id: Date { startTime }
 }
 
 struct TodaySummarySnapshot: Sendable {
-    let entries: [TodayTimelineEntry]
+    let blocks: [TodayTimeBlock]
     let studyDuration: TimeInterval
     let leisureDuration: TimeInterval
 
-    static let empty = TodaySummarySnapshot(entries: [], studyDuration: 0, leisureDuration: 0)
+    static let empty = TodaySummarySnapshot(blocks: [], studyDuration: 0, leisureDuration: 0)
+}
+
+private struct TodayAppUsageAccumulator {
+    let identity: String
+    let displayName: String
+    let sourceName: String?
+    var duration: TimeInterval = 0
+    var studyDuration: TimeInterval = 0
+    var leisureDuration: TimeInterval = 0
+    var detailDurations: [String: TimeInterval] = [:]
+
+    mutating func add(log: PreparedLog, duration: TimeInterval) {
+        self.duration += duration
+        if log.isStudy {
+            studyDuration += duration
+        } else {
+            leisureDuration += duration
+        }
+
+        let detail = TodaySummaryBuilder.detailName(for: log)
+        detailDurations[detail, default: 0] += duration
+    }
+
+    func build() -> TodayAppUsage {
+        // 详情只展示耗时最高的三个内容，避免浏览器标签页较多时挤占 App 用时主体。
+        let details = detailDurations
+            .sorted { lhs, rhs in
+                lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value > rhs.value
+            }
+            .prefix(3)
+            .map(\.key)
+
+        return TodayAppUsage(
+            identity: identity,
+            displayName: displayName,
+            sourceName: sourceName,
+            duration: duration,
+            studyDuration: studyDuration,
+            leisureDuration: leisureDuration,
+            detailSummary: details.isEmpty ? nil : details.joined(separator: "、")
+        )
+    }
 }
 
 enum TodaySummaryBuilder {
-    private static let mergeGapTolerance: TimeInterval = 5
-
     static func build(
         now: Date,
         whitelist: WhitelistSnapshot,
         calendar: Calendar
     ) -> TodaySummarySnapshot {
-        // 1. 只读取今天开始的原始记录，并裁剪超过当前时刻或今日边界的异常时段。
+        // 1. 读取与今天相交的日志，并沿用数据中心既有的分类与内容标准化规则。
         let dayStart = calendar.startOfDay(for: now)
         guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else {
             return .empty
@@ -39,69 +89,93 @@ enum TodaySummaryBuilder {
             includeOverlapping: true
         )
         .compactMap { PreparedLog(snapshot: $0, whitelist: whitelist, calendar: calendar) }
-        .sorted { $0.startTime < $1.startTime }
 
-        // 2. 把日志转换为可展示的时间段，并沿用统计中心的标题、域名和学习分类口径。
-        var entries: [TodayTimelineEntry] = []
+        // 2. 把每条日志裁剪到今天，并在跨越整点时拆分到对应的自然小时。
+        // 这样快速切换窗口只会增加小时块内的 App 用时，不会制造大量秒级时间线条目。
+        var hourlyApps: [Date: [String: TodayAppUsageAccumulator]] = [:]
+        var studyDuration: TimeInterval = 0
+        var leisureDuration: TimeInterval = 0
+
         for log in logs {
-            let startTime = max(log.startTime, dayStart)
-            let endTime = min(log.endTime, min(now, dayEnd))
-            guard endTime > startTime else { continue }
+            var segmentStart = max(log.startTime, dayStart)
+            let logEnd = min(log.endTime, min(now, dayEnd))
+            guard logEnd > segmentStart else { continue }
 
-            let subtitle = timelineSubtitle(for: log)
-            let entry = TodayTimelineEntry(
-                id: "\(log.identity.hashValue)-\(startTime.timeIntervalSinceReferenceDate)",
-                appName: log.appName,
-                title: log.windowTitle,
-                subtitle: subtitle,
-                startTime: startTime,
-                endTime: endTime,
-                duration: endTime.timeIntervalSince(startTime),
-                isStudy: log.isStudy
-            )
+            while segmentStart < logEnd {
+                guard let hourInterval = calendar.dateInterval(of: .hour, for: segmentStart) else { break }
+                let segmentEnd = min(logEnd, hourInterval.end)
+                let segmentDuration = segmentEnd.timeIntervalSince(segmentStart)
+                guard segmentDuration > 0 else { break }
 
-            // 同一活动可能因定期持久化或旧版数据迁移留下紧邻片段；仅合并五秒内的同类片段，
-            // 避免时间线把一次连续活动拆成多个视觉上重复的卡片。
-            if let previous = entries.last,
-               canMerge(previous, entry),
-               entry.startTime.timeIntervalSince(previous.endTime) <= mergeGapTolerance {
-                entries[entries.count - 1] = TodayTimelineEntry(
-                    id: previous.id,
-                    appName: previous.appName,
-                    title: previous.title,
-                    subtitle: previous.subtitle,
-                    startTime: previous.startTime,
-                    endTime: max(previous.endTime, entry.endTime),
-                    duration: max(previous.endTime, entry.endTime).timeIntervalSince(previous.startTime),
-                    isStudy: previous.isStudy
+                let usageIdentity = usageIdentity(for: log)
+                var apps = hourlyApps[hourInterval.start, default: [:]]
+                var appUsage = apps[usageIdentity] ?? TodayAppUsageAccumulator(
+                    identity: usageIdentity,
+                    displayName: displayName(for: log),
+                    sourceName: websiteDomain(for: log) == nil ? nil : log.appName
                 )
-            } else {
-                entries.append(entry)
+                appUsage.add(log: log, duration: segmentDuration)
+                apps[usageIdentity] = appUsage
+                hourlyApps[hourInterval.start] = apps
+
+                if log.isStudy {
+                    studyDuration += segmentDuration
+                } else {
+                    leisureDuration += segmentDuration
+                }
+                segmentStart = segmentEnd
             }
         }
 
-        // 3. 基于最终展示片段计算概览，保证顶部总时长与下方时间线严格一致。
-        let studyDuration = entries.filter(\.isStudy).reduce(0) { $0 + $1.duration }
-        let leisureDuration = entries.filter { !$0.isStudy }.reduce(0) { $0 + $1.duration }
+        // 3. 每个小时内按 App 总用时降序排列，小时块则按最近优先展示。
+        var blocks: [TodayTimeBlock] = []
+        for (hourStart, appAccumulators) in hourlyApps {
+            guard let hourEnd = calendar.date(byAdding: .hour, value: 1, to: hourStart) else { continue }
+            var appUsages = appAccumulators.values.map { $0.build() }
+            appUsages.sort { lhs, rhs in
+                if lhs.duration == rhs.duration {
+                    return lhs.displayName < rhs.displayName
+                }
+                return lhs.duration > rhs.duration
+            }
+            let totalDuration = appUsages.reduce(TimeInterval.zero) { partialResult, usage in
+                partialResult + usage.duration
+            }
+            blocks.append(TodayTimeBlock(
+                startTime: hourStart,
+                endTime: min(hourEnd, now),
+                totalDuration: totalDuration,
+                appUsages: appUsages
+            ))
+        }
+        blocks.sort { $0.startTime > $1.startTime }
+
         return TodaySummarySnapshot(
-            entries: entries.reversed(),
+            blocks: blocks,
             studyDuration: studyDuration,
             leisureDuration: leisureDuration
         )
     }
 
-    private static func timelineSubtitle(for log: PreparedLog) -> String? {
-        if let domain = log.resolvedDomain, domain.caseInsensitiveCompare(log.appName) != .orderedSame {
-            return "\(log.appName) · \(domain)"
-        }
-        return log.appName == log.windowTitle ? nil : log.appName
+    static func detailName(for log: PreparedLog) -> String {
+        log.windowTitle == log.appName ? log.appName : log.windowTitle
     }
 
-    private static func canMerge(_ lhs: TodayTimelineEntry, _ rhs: TodayTimelineEntry) -> Bool {
-        lhs.appName == rhs.appName
-            && lhs.title == rhs.title
-            && lhs.subtitle == rhs.subtitle
-            && lhs.isStudy == rhs.isStudy
+    private static func usageIdentity(for log: PreparedLog) -> String {
+        // 浏览器按域名而不是浏览器 App 聚合，避免查阅多个网站时全部被折叠为 Chrome。
+        if let domain = websiteDomain(for: log) {
+            return "domain:\(domain.lowercased())"
+        }
+        return "app:\(log.appName.lowercased())"
+    }
+
+    private static func displayName(for log: PreparedLog) -> String {
+        websiteDomain(for: log) ?? log.appName
+    }
+
+    private static func websiteDomain(for log: PreparedLog) -> String? {
+        // 某些旧版原生 App 日志可能残留 domain 元数据；只有浏览器日志才能按网站拆分。
+        log.isWebsite ? log.resolvedDomain : nil
     }
 }
 
@@ -122,9 +196,9 @@ struct TodaySummaryView: View {
             VStack(spacing: 0) {
                 header
 
-                if isLoading && snapshot.entries.isEmpty {
+                if isLoading && snapshot.blocks.isEmpty {
                     loadingState
-                } else if snapshot.entries.isEmpty {
+                } else if snapshot.blocks.isEmpty {
                     emptyState
                 } else {
                     ScrollView {
@@ -170,12 +244,12 @@ struct TodaySummaryView: View {
 
             Spacer()
 
-            Label("\(snapshot.entries.count) 个时间段", systemImage: "clock.fill")
+            Label("\(snapshot.blocks.count) 个时段", systemImage: "clock.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(AppDesign.websiteTeal)
+                .foregroundStyle(AppDesign.primaryBlue)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(AppDesign.websiteTeal.opacity(0.10)))
+                .background(Capsule().fill(AppDesign.primaryBlue.opacity(0.11)))
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)
@@ -212,11 +286,15 @@ struct TodaySummaryView: View {
 
     private var timeline: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AppSectionHeader(title: "活动时间线", subtitle: "最近的活动显示在最上方", compact: true)
+            AppSectionHeader(
+                title: "分时段 App 用时",
+                subtitle: "按小时汇总，切换窗口不会拆散同一时段",
+                compact: true
+            )
 
-            VStack(spacing: 0) {
-                ForEach(Array(snapshot.entries.enumerated()), id: \.element.id) { index, entry in
-                    TodayTimelineRow(entry: entry, isLast: index == snapshot.entries.count - 1)
+            LazyVStack(spacing: 12) {
+                ForEach(snapshot.blocks) { block in
+                    TodayTimeBlockCard(block: block)
                 }
             }
         }
@@ -257,7 +335,7 @@ struct TodaySummaryView: View {
         let now = Date()
         let calendar = calendar
 
-        // 数据读取和时间段整理放到后台执行，避免打开窗口时阻塞菜单栏和主线程动画。
+        // 数据读取和小时聚合放到后台执行，避免打开窗口时阻塞菜单栏和主线程动画。
         refreshTask = Task {
             let refreshedSnapshot = await Task.detached(priority: .userInitiated) {
                 TodaySummaryBuilder.build(now: now, whitelist: whitelist, calendar: calendar)
@@ -305,91 +383,143 @@ private struct TodaySummaryMetric: View {
                 .fill(AppDesign.tintedSurface(tint, opacity: 0.11))
         )
     }
+}
 
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let totalMinutes = Int(duration) / 60
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        return hours > 0 ? "\(hours)时\(minutes)分" : "\(minutes)分钟"
+private struct TodayTimeBlockCard: View {
+    let block: TodayTimeBlock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(formatTimeBlock(block), systemImage: "clock")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(AppDesign.primaryBlue)
+
+                Spacer()
+
+                Text("已记录 \(formatDuration(block.totalDuration))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AppDesign.secondaryText)
+            }
+
+            VStack(spacing: 10) {
+                ForEach(Array(block.appUsages.enumerated()), id: \.element.id) { index, usage in
+                    TodayAppUsageRow(
+                        usage: usage,
+                        totalDuration: block.totalDuration,
+                        tint: AppDesign.chartPalette[index % AppDesign.chartPalette.count]
+                    )
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                .fill(AppDesign.elevatedPanelBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
+                        .stroke(Color.primary.opacity(0.045), lineWidth: 1)
+                )
+        )
+    }
+
+    private func formatTimeBlock(_ block: TodayTimeBlock) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return "\(formatter.string(from: block.startTime)) – \(formatter.string(from: block.endTime))"
     }
 }
 
-private struct TodayTimelineRow: View {
-    let entry: TodayTimelineEntry
-    let isLast: Bool
-
-    private var tint: Color {
-        entry.isStudy ? AppDesign.primaryBlue : AppDesign.leisurePurple
-    }
+private struct TodayAppUsageRow: View {
+    let usage: TodayAppUsage
+    let totalDuration: TimeInterval
+    let tint: Color
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(tint)
-                    .frame(width: 9, height: 9)
-                    .overlay(Circle().stroke(tint.opacity(0.20), lineWidth: 4))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tint)
 
-                if !isLast {
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.09))
-                        .frame(width: 1)
-                        .frame(minHeight: 58)
-                }
-            }
-            .padding(.top, 5)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(usage.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppDesign.primaryText)
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(formatTimeRange(entry))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(tint)
-
-                    Spacer()
-
-                    Text(formatDuration(entry.duration))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(AppDesign.secondaryText)
-                }
-
-                Text(entry.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppDesign.primaryText)
-                    .lineLimit(2)
-
-                HStack(spacing: 6) {
-                    Text(entry.isStudy ? "学习" : "休闲")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(tint)
-
-                    if let subtitle = entry.subtitle {
-                        Text("·")
+                    if let subtitle {
                         Text(subtitle)
+                            .font(.system(size: 10))
+                            .foregroundStyle(AppDesign.tertiaryText)
                             .lineLimit(1)
                     }
                 }
-                .font(.system(size: 10))
-                .foregroundStyle(AppDesign.tertiaryText)
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(formatDuration(usage.duration))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(AppDesign.primaryText)
+
+                    Text(categorySummary)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(AppDesign.secondaryText)
+                }
             }
-            .padding(.bottom, isLast ? 0 : 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.055))
+                    Capsule()
+                        .fill(tint.opacity(0.72))
+                        .frame(width: proxy.size.width * usageRatio)
+                }
+            }
+            .frame(height: 4)
         }
     }
 
-    private func formatTimeRange(_ entry: TodayTimelineEntry) -> String {
-        // 很短的切换片段如果只显示到分钟，会出现起止时间完全相同；此时补充秒数才能真实表达时间段。
-        let formatter = DateFormatter()
-        formatter.dateFormat = entry.duration < 60 ? "HH:mm:ss" : "HH:mm"
-        return "\(formatter.string(from: entry.startTime)) – \(formatter.string(from: entry.endTime))"
+    private var usageRatio: CGFloat {
+        guard totalDuration > 0 else { return 0 }
+        return CGFloat(min(1, max(0, usage.duration / totalDuration)))
     }
 
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let totalSeconds = max(0, Int(duration))
-        let hours = totalSeconds / 3600
-        let minutes = (totalSeconds % 3600) / 60
-        if hours > 0 {
-            return minutes > 0 ? "\(hours)时\(minutes)分" : "\(hours)小时"
+    private var subtitle: String? {
+        var parts: [String] = []
+        if let sourceName = usage.sourceName,
+           !sourceName.isEmpty,
+           sourceName != usage.displayName {
+            parts.append(sourceName)
         }
-        return minutes > 0 ? "\(minutes)分钟" : "不足1分钟"
+        if let detailSummary = usage.detailSummary,
+           !detailSummary.isEmpty,
+           detailSummary != usage.displayName {
+            parts.append(detailSummary)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+
+    private var categorySummary: String {
+        let hasStudy = usage.studyDuration >= 1
+        let hasLeisure = usage.leisureDuration >= 1
+        if hasStudy && hasLeisure {
+            return "学习 \(formatDuration(usage.studyDuration)) · 休闲 \(formatDuration(usage.leisureDuration))"
+        }
+        return hasStudy ? "学习" : "休闲"
+    }
+}
+
+private func formatDuration(_ duration: TimeInterval) -> String {
+    let totalSeconds = max(0, Int(duration.rounded()))
+    let hours = totalSeconds / 3600
+    let minutes = (totalSeconds % 3600) / 60
+
+    if hours > 0 {
+        return minutes > 0 ? "\(hours)时\(minutes)分" : "\(hours)小时"
+    }
+    if minutes > 0 {
+        return "\(minutes)分钟"
+    }
+    return "不足1分钟"
 }
