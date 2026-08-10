@@ -4,6 +4,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let featureWindowWillOpen = Notification.Name("GrandleTick.featureWindowWillOpen")
+    static let todaySummaryShouldRefresh = Notification.Name("GrandleTick.todaySummaryShouldRefresh")
 }
 
 /// 菜单栏应用切换为普通应用后，仍显式兜底标准的 Command-W 关闭行为。
@@ -25,6 +26,7 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
 
     private var statisticsWindow: NSWindow?
     private var whitelistWindow: NSWindow?
+    private var todaySummaryWindow: NSWindow?
 
     private override init() {
         super.init()
@@ -87,6 +89,39 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
         present(window)
     }
 
+    func openTodaySummaryWindow(modelContext: ModelContext) {
+        // 1. 今日总结沿用其它菜单功能的独立窗口行为，避免大段时间线受菜单栏弹层高度限制。
+        prepareForFeatureWindowPresentation()
+
+        // 2. 窗口已存在时通知内容刷新，确保再次点击入口能看到刚写入的当前会话。
+        if let todaySummaryWindow {
+            NotificationCenter.default.post(name: .todaySummaryShouldRefresh, object: nil)
+            present(todaySummaryWindow)
+            return
+        }
+
+        // 3. 创建可缩放的标准窗口；尺寸和留白使用现有设计系统，保持与数据中心一致。
+        let window = FeatureWindow(
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: AppConfig.todaySummaryWidth,
+                height: AppConfig.todaySummaryHeight
+            ),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        configure(window, title: "今日总结", titlebarAppearsTransparent: false)
+        window.minSize = NSSize(width: 540, height: 520)
+        window.contentView = NSHostingView(
+            rootView: TodaySummaryView().modelContext(modelContext)
+        )
+
+        todaySummaryWindow = window
+        present(window)
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let closingWindow = notification.object as? NSWindow else { return }
 
@@ -96,6 +131,9 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
         }
         if whitelistWindow === closingWindow {
             whitelistWindow = nil
+        }
+        if todaySummaryWindow === closingWindow {
+            todaySummaryWindow = nil
         }
 
         // 2. 等关闭事件完成后再检查其它功能窗口；全部关闭时隐藏 Dock 图标，但保留菜单栏进程。
@@ -133,7 +171,9 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func restoreMenuBarOnlyModeIfNeeded() {
-        guard statisticsWindow == nil, whitelistWindow == nil else { return }
+        guard statisticsWindow == nil,
+              whitelistWindow == nil,
+              todaySummaryWindow == nil else { return }
         NSApp.setActivationPolicy(.accessory)
     }
 

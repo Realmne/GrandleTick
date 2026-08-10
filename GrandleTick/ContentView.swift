@@ -218,6 +218,13 @@ struct ContentView: View {
                 )
 
                 ActionCapsuleButton(
+                    title: "今日总结",
+                    systemImage: "clock.arrow.circlepath",
+                    tint: AppDesign.websiteTeal,
+                    action: openTodaySummaryWindow
+                )
+
+                ActionCapsuleButton(
                     title: "清空所有历史数据",
                     systemImage: "trash.fill",
                     tint: AppDesign.destructiveRed,
@@ -290,6 +297,12 @@ struct ContentView: View {
     
     func openStatisticsWindow() {
         FeatureWindowCoordinator.shared.openStatisticsWindow(modelContext: modelContext)
+    }
+
+    func openTodaySummaryWindow() {
+        // 打开总结前先把正在进行的会话写入数据库，让时间线能够包含用户此刻正在做的事情。
+        usageManager.flushPendingSession()
+        FeatureWindowCoordinator.shared.openTodaySummaryWindow(modelContext: modelContext)
     }
     
     private func showResetConfirmation() {

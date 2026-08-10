@@ -220,7 +220,11 @@ enum ActivityLogSnapshotStore {
             .appendingPathComponent("ActivityData.sqlite")
     }
 
-    static func fetchLogs(databaseURL: URL, interval: DateInterval?) -> [ActivityLogSnapshot] {
+    static func fetchLogs(
+        databaseURL: URL,
+        interval: DateInterval?,
+        includeOverlapping: Bool = false
+    ) -> [ActivityLogSnapshot] {
         // 1. 在后台直接读取 SQLite 行，绕开 SwiftData 对象图构建带来的主线程成本。
         var database: OpaquePointer?
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
@@ -237,6 +241,14 @@ enum ActivityLogSnapshotStore {
             sql = """
             SELECT ZAPPNAME, ZWINDOWTITLE, ZSTARTTIME, ZDURATION, ZDOMAIN, ZBILIBILIIDENTIFIER, ZFULLURL, ZPDFIDENTIFIER
             FROM ZACTIVITYLOG
+            ORDER BY ZSTARTTIME DESC
+            """
+        } else if includeOverlapping {
+            // 今日时间线需要包含昨晚开始、跨过零点后仍在继续的会话；原有统计调用保持按开始时间筛选。
+            sql = """
+            SELECT ZAPPNAME, ZWINDOWTITLE, ZSTARTTIME, ZDURATION, ZDOMAIN, ZBILIBILIIDENTIFIER, ZFULLURL, ZPDFIDENTIFIER
+            FROM ZACTIVITYLOG
+            WHERE ZSTARTTIME < ? AND (ZSTARTTIME + ZDURATION) > ?
             ORDER BY ZSTARTTIME DESC
             """
         } else {
@@ -257,8 +269,13 @@ enum ActivityLogSnapshotStore {
         defer { sqlite3_finalize(statement) }
 
         if let interval {
-            sqlite3_bind_double(statement, 1, interval.start.timeIntervalSinceReferenceDate)
-            sqlite3_bind_double(statement, 2, interval.end.timeIntervalSinceReferenceDate)
+            if includeOverlapping {
+                sqlite3_bind_double(statement, 1, interval.end.timeIntervalSinceReferenceDate)
+                sqlite3_bind_double(statement, 2, interval.start.timeIntervalSinceReferenceDate)
+            } else {
+                sqlite3_bind_double(statement, 1, interval.start.timeIntervalSinceReferenceDate)
+                sqlite3_bind_double(statement, 2, interval.end.timeIntervalSinceReferenceDate)
+            }
         }
 
         var snapshots: [ActivityLogSnapshot] = []

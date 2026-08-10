@@ -22,10 +22,13 @@ enum AppConfig {
 
     // MARK: - UI Defaults
     static let popoverWidth: CGFloat = 320
-    static let popoverHeight: CGFloat = 570
-    static let expandedPopoverHeight: CGFloat = 700
+    // 新增“今日总结”入口后为操作区预留一行空间，避免底部退出按钮在固定高度弹层中被裁切。
+    static let popoverHeight: CGFloat = 620
+    static let expandedPopoverHeight: CGFloat = 750
     static let statisticsWidth: CGFloat = 860
     static let statisticsHeight: CGFloat = 680
+    static let todaySummaryWidth: CGFloat = 680
+    static let todaySummaryHeight: CGFloat = 720
     static let breakReminderWidth: CGFloat = 360
     static let breakReminderHeight: CGFloat = 142
     static let breakReminderScreenMargin: CGFloat = 18
