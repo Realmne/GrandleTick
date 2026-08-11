@@ -29,6 +29,56 @@ struct TodaySummarySnapshot: Sendable {
     static let empty = TodaySummarySnapshot(blocks: [], studyDuration: 0, leisureDuration: 0)
 }
 
+private enum TodayDayPeriod: Int, CaseIterable, Identifiable {
+    case morning
+    case afternoon
+    case evening
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .morning: "上午"
+        case .afternoon: "下午"
+        case .evening: "晚上"
+        }
+    }
+
+    var timeRange: String {
+        switch self {
+        case .morning: "00:00 – 12:00"
+        case .afternoon: "12:00 – 18:00"
+        case .evening: "18:00 – 24:00"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .morning: "sunrise.fill"
+        case .afternoon: "sun.max.fill"
+        case .evening: "moon.stars.fill"
+        }
+    }
+
+    static func period(for date: Date, calendar: Calendar) -> TodayDayPeriod {
+        let hour = calendar.component(.hour, from: date)
+        switch hour {
+        case 0..<12: return .morning
+        case 12..<18: return .afternoon
+        default: return .evening
+        }
+    }
+}
+
+private struct TodayDayPeriodSection: Identifiable {
+    let period: TodayDayPeriod
+    let blocks: [TodayTimeBlock]
+    let studyDuration: TimeInterval
+    let leisureDuration: TimeInterval
+
+    var id: TodayDayPeriod.ID { period.id }
+}
+
 private struct TodayAppUsageAccumulator {
     let identity: String
     let displayName: String
@@ -292,17 +342,42 @@ struct TodaySummaryView: View {
         VStack(alignment: .leading, spacing: 14) {
             AppSectionHeader(
                 title: "分时段 App 用时",
-                subtitle: "按小时汇总，切换窗口不会拆散同一时段",
+                subtitle: "按上午、下午和晚上分组，组内继续按小时汇总",
                 compact: true
             )
 
-            LazyVStack(spacing: 12) {
-                ForEach(snapshot.blocks) { block in
-                    TodayTimeBlockCard(block: block)
+            LazyVStack(spacing: 18) {
+                ForEach(dayPeriodSections) { section in
+                    VStack(alignment: .leading, spacing: 10) {
+                        TodayDayPeriodHeader(section: section)
+
+                        ForEach(section.blocks) { block in
+                            TodayTimeBlockCard(block: block)
+                        }
+                    }
                 }
             }
         }
         .appPanel(.regular)
+    }
+
+    private var dayPeriodSections: [TodayDayPeriodSection] {
+        // 1. 继续沿用小时卡片的倒序展示，并把可见卡片归入上午、下午、晚上三个固定区间。
+        let groupedBlocks = Dictionary(grouping: snapshot.blocks) { block in
+            TodayDayPeriod.period(for: block.startTime, calendar: calendar)
+        }
+
+        // 2. 每组只汇总已经通过一分钟过滤的可见条目，保证分组小计与顶部概览口径一致。
+        return TodayDayPeriod.allCases.reversed().compactMap { period in
+            guard let blocks = groupedBlocks[period], !blocks.isEmpty else { return nil }
+            let usages = blocks.flatMap(\.appUsages)
+            return TodayDayPeriodSection(
+                period: period,
+                blocks: blocks,
+                studyDuration: usages.reduce(TimeInterval.zero) { $0 + $1.studyDuration },
+                leisureDuration: usages.reduce(TimeInterval.zero) { $0 + $1.leisureDuration }
+            )
+        }
     }
 
     private var loadingState: some View {
@@ -386,6 +461,51 @@ private struct TodaySummaryMetric: View {
             RoundedRectangle(cornerRadius: AppDesign.mediumCornerRadius, style: .continuous)
                 .fill(AppDesign.tintedSurface(tint, opacity: 0.11))
         )
+    }
+}
+
+private struct TodayDayPeriodHeader: View {
+    let section: TodayDayPeriodSection
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(section.period.title, systemImage: section.period.systemImage)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(AppDesign.primaryText)
+
+            Text(section.period.timeRange)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(AppDesign.tertiaryText)
+
+            Spacer()
+
+            TodayDayPeriodDuration(
+                title: "学习",
+                duration: section.studyDuration,
+                tint: AppDesign.primaryBlue
+            )
+            TodayDayPeriodDuration(
+                title: "休闲",
+                duration: section.leisureDuration,
+                tint: AppDesign.leisurePurple
+            )
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct TodayDayPeriodDuration: View {
+    let title: String
+    let duration: TimeInterval
+    let tint: Color
+
+    var body: some View {
+        Text("\(title) \(formatDuration(duration))")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(AppDesign.tintedSurface(tint, opacity: 0.10)))
     }
 }
 
