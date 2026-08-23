@@ -47,6 +47,7 @@ struct StatisticsView: View {
                                 LearningVsEntertainmentDonutCard(
                                     studyDuration: engine.studyDuration,
                                     entertainmentDuration: engine.entertainmentDuration,
+                                    chartDataGeneration: engine.filterComputationGeneration,
                                     formatDuration: formatCompactDuration
                                 )
 
@@ -54,6 +55,7 @@ struct StatisticsView: View {
                                     websiteDuration: engine.websiteDuration,
                                     pdfDuration: engine.pdfDuration,
                                     totalDuration: engine.studyDuration,
+                                    chartDataGeneration: engine.filterComputationGeneration,
                                     formatDuration: formatCompactDuration
                                 )
                             }
@@ -62,6 +64,7 @@ struct StatisticsView: View {
                             RangeTrendSection(
                                 daySummaries: engine.daySummaries,
                                 selectedDay: engine.selectedDay,
+                                chartDataGeneration: engine.filterComputationGeneration,
                                 onSelectDay: { engine.updateSelectedDay($0) },
                                 formatDuration: formatCompactDuration
                             )
@@ -72,6 +75,7 @@ struct StatisticsView: View {
                                 primaryTimeSlot: engine.primaryTimeSlot,
                                 earliestStudyStart: engine.earliestStudyStart,
                                 latestStudyEnd: engine.latestStudyEnd,
+                                chartDataGeneration: engine.filterComputationGeneration,
                                 formatDuration: formatCompactDuration,
                                 formatClock: formatClock
                             )
@@ -80,6 +84,7 @@ struct StatisticsView: View {
                             AppFocusDonutCard(
                                 topApps: engine.topStudyApps,
                                 totalDuration: engine.studyDuration,
+                                chartDataGeneration: engine.filterComputationGeneration,
                                 formatDuration: formatCompactDuration
                             )
 
@@ -686,6 +691,7 @@ private struct RangeTrendSection: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let daySummaries: [DaySummary]
     let selectedDay: Date?
+    let chartDataGeneration: UInt
     let onSelectDay: (Date) -> Void
     let formatDuration: (TimeInterval) -> String
     @State private var highlightedDay: Date?
@@ -713,6 +719,9 @@ private struct RangeTrendSection: View {
             .chartYAxis { AxisMarks(position: .leading) }
             .chartXAxis { AxisMarks(values: .automatic) { value in AxisGridLine(); AxisValueLabel { if let date = value.as(Date.self) { Text(formatShortDate(date)) } } } }
             .chartOverlay { proxy in GeometryReader { geometry in Rectangle().fill(.clear).contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in updateSelection(at: value.location, proxy: proxy, geometry: geometry) }) } }
+            .chartXScale(domain: chartDateDomain)
+            // 每批统计结果都重建 Charts 内部布局，避免月视图多日期缩到周视图单日期时复用旧比例尺并产生 NaN。
+            .id(chartDataGeneration)
 
             if let strongestDay = daySummaries.max(by: { $0.totalTime < $1.totalTime }) {
                 HStack {
@@ -735,6 +744,19 @@ private struct RangeTrendSection: View {
     }
 
     private func isHighlighted(_ date: Date) -> Bool { guard let highlightedDay else { return false }; return Calendar.current.isDate(date, inSameDayAs: highlightedDay) }
+
+    private var chartDateDomain: ClosedRange<Date> {
+        // 单日统计也显式保留完整一天的横轴宽度，避免自动日期域退化成起止点相同的零长度区间。
+        let calendar = Calendar.current
+        let firstDate = daySummaries.first?.date ?? Date()
+        let lastDate = daySummaries.last?.date ?? firstDate
+        let start = calendar.startOfDay(for: firstDate)
+        let lastDayStart = calendar.startOfDay(for: lastDate)
+        let end = calendar.date(byAdding: .day, value: 1, to: lastDayStart)
+            ?? lastDayStart.addingTimeInterval(24 * 60 * 60)
+        return start...end
+    }
+
     private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
         // 1. 提取图表的绘图区域，并将触摸点坐标转换为相对于绘图区的坐标。
         guard let plotFrame = proxy.plotFrame.map({ geometry[$0] }) else { return }
@@ -999,6 +1021,7 @@ private struct LearningVsEntertainmentDonutCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let studyDuration: TimeInterval
     let entertainmentDuration: TimeInterval
+    let chartDataGeneration: UInt
     let formatDuration: (TimeInterval) -> String
 
     @State private var animateData = false
@@ -1053,6 +1076,8 @@ private struct LearningVsEntertainmentDonutCard: View {
                         }
                     }
                 }
+                // SectorMark 对动态增删扇区较敏感；按完整统计批次重建可避免内部角度缓存跨周期复用。
+                .id(chartDataGeneration)
 
                 VStack(alignment: .leading, spacing: 8) {
                     ReportLegendStat(title: "学习时间", value: formatDuration(studyDuration), tint: AppDesign.primaryBlue)
@@ -1078,6 +1103,7 @@ private struct ContentCategoryDonutCard: View {
     let websiteDuration: TimeInterval
     let pdfDuration: TimeInterval
     let totalDuration: TimeInterval
+    let chartDataGeneration: UInt
     let formatDuration: (TimeInterval) -> String
 
     @State private var animateData = false
@@ -1116,6 +1142,7 @@ private struct ContentCategoryDonutCard: View {
                 .frame(width: 100, height: 100)
                 .scaleEffect(reduceMotion || animateData ? 1.0 : 0.96)
                 .opacity(animateData ? 1.0 : 0.0)
+                .id(chartDataGeneration)
 
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(categories) { item in
@@ -1155,6 +1182,7 @@ private struct RhythmSection: View {
     let primaryTimeSlot: ReportTimeSlot?
     let earliestStudyStart: Date?
     let latestStudyEnd: Date?
+    let chartDataGeneration: UInt
     let formatDuration: (TimeInterval) -> String
     let formatClock: (Date) -> String
 
@@ -1166,7 +1194,10 @@ private struct RhythmSection: View {
             HStack(alignment: .top, spacing: 16) {
                 // Left: Hourly Area/Line Chart
                 VStack(alignment: .leading, spacing: 10) {
-                    ReportRhythmHourlyChart(hourlyDurations: hourlyDurations)
+                    ReportRhythmHourlyChart(
+                        hourlyDurations: hourlyDurations,
+                        chartDataGeneration: chartDataGeneration
+                    )
 
                     if let primaryTimeSlot {
                         Text("你更常在")
@@ -1207,6 +1238,7 @@ private struct RhythmSection: View {
 private struct ReportRhythmHourlyChart: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let hourlyDurations: [Double]
+    let chartDataGeneration: UInt
 
     @State private var animateData = false
 
@@ -1268,6 +1300,7 @@ private struct ReportRhythmHourlyChart: View {
                 }
             }
         }
+        .id(chartDataGeneration)
         .onAppear {
             withAnimation(reduceMotion ? nil : AppDesign.animationCurve.delay(0.08)) {
                 animateData = true
@@ -1306,6 +1339,7 @@ private struct AppFocusDonutCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let topApps: [RankingEntry]
     let totalDuration: TimeInterval
+    let chartDataGeneration: UInt
     let formatDuration: (TimeInterval) -> String
 
     @State private var animateData = false
@@ -1360,6 +1394,7 @@ private struct AppFocusDonutCard: View {
                 .frame(width: 100, height: 100)
                 .scaleEffect(reduceMotion || animateData ? 1.0 : 0.96)
                 .opacity(animateData ? 1.0 : 0.0)
+                .id(chartDataGeneration)
 
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(segments) { segment in
