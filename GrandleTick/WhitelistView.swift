@@ -147,12 +147,13 @@ struct WhitelistView: View {
                     .foregroundColor(selectedMode == mode ? mode.tint : .secondary)
                     .background(
                         RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
-                            .fill(selectedMode == mode ? mode.tint.opacity(0.12) : Color.clear)
+                            .fill(selectedMode == mode ? mode.tint.opacity(0.12) : Color.white.opacity(0.001))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
                             .stroke(selectedMode == mode ? mode.tint.opacity(0.25) : Color.primary.opacity(0.06), lineWidth: 1)
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -507,6 +508,7 @@ private struct WhitelistEntryCard: View {
                         Circle()
                             .fill(AppDesign.destructiveRed.opacity(0.10))
                     )
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
         }

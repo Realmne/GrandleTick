@@ -157,6 +157,7 @@ struct AppCapsuleButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
                     .fill(fill.opacity(configuration.isPressed ? 0.72 : 1))
             )
+            .contentShape(RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(AppDesign.animationCurve, value: configuration.isPressed)
     }

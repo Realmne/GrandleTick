@@ -1105,6 +1105,7 @@ private struct ArchetypeCard: View {
                 .padding(.vertical, 8)
                 .padding(.horizontal, 16)
                 .background(Capsule().stroke(AnnualReportView.studyColor.opacity(0.28), lineWidth: 1))
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .focusable(false)

@@ -375,13 +375,14 @@ private struct BreakTimerIconButton: View {
                     .foregroundStyle(isScheduled ? AppDesign.successGreen : AppDesign.secondaryText)
                     .frame(width: 30, height: 30)
                     .background(
-                        Circle()
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(
                                 isScheduled
                                     ? AppDesign.successGreen.opacity(isHovered ? 0.18 : 0.12)
                                     : Color.primary.opacity(isHovered ? 0.10 : 0.055)
                             )
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                 if isScheduled {
                     Circle()
@@ -539,6 +540,7 @@ private struct ActionCapsuleButton: View {
                 RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius)
                     .fill(tint.opacity(isHovered ? 0.14 : 0.08))
             )
+            .contentShape(RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius))
             .scaleEffect(isHovered ? 1.01 : 1)
         }
         .buttonStyle(.plain)
