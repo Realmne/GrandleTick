@@ -799,7 +799,7 @@ private struct UsageQuerySection: View {
         max(1, (displayedMonthlyWeekSummaries.map(\.totalTime).max() ?? 0) / 3600 * 1.15)
     }
 
-    /// 根据展示的月份数量动态计算柱宽，月份少时柱子更粗、间距更紧凑，避免大面积留白。
+    /// 基于月份数量估算每根柱的理想宽度，用于计算绘图区总宽度；柱体本身使用自动宽度避免重叠。
     private var dynamicBarWidth: CGFloat {
         let monthCount = displayedMonthlySummaries.count
         switch monthCount {
@@ -809,11 +809,6 @@ private struct UsageQuerySection: View {
         case 6...8: return 16
         default:    return 12
         }
-    }
-
-    /// 柱宽变化时同步调整圆角，保持视觉比例协调。
-    private var dynamicCornerRadius: CGFloat {
-        dynamicBarWidth >= 20 ? 5 : 4
     }
 
     /// 根据月份数量计算绘图区宽度。每个月份占据固定槽位宽度，少月时图表自动收窄，
@@ -1093,17 +1088,17 @@ private struct UsageQuerySection: View {
             }
 
             Chart(displayedMonthlyWeekSummaries) { summary in
+                // 使用比例宽度而非固定像素，让 Charts 在 span 内自动分配每根柱的空间，避免柱间重叠。
                 BarMark(
                     x: .value("月份", monthChartKey(summary.monthStart)),
-                    y: .value("小时", summary.totalTime / 3600),
-                    width: .fixed(dynamicBarWidth)
+                    y: .value("小时", summary.totalTime / 3600)
                 )
                 .position(
                     by: .value("周次", summary.weekIndex),
-                    span: .ratio(0.92)
+                    span: .ratio(0.82)
                 )
                 .foregroundStyle(weekColor(summary.weekIndex))
-                .cornerRadius(dynamicCornerRadius)
+                .cornerRadius(4)
 
                 if summary.totalTime == 0 {
                     // 零值柱本身没有高度，用基线圆点保留周位置，避免误以为该月缺少某一周。
@@ -1113,9 +1108,9 @@ private struct UsageQuerySection: View {
                     )
                     .position(
                         by: .value("周次", summary.weekIndex),
-                        span: .ratio(0.92)
+                        span: .ratio(0.82)
                     )
-                    .symbolSize(18)
+                    .symbolSize(14)
                     .foregroundStyle(weekColor(summary.weekIndex).opacity(0.7))
                 }
             }
