@@ -21,11 +21,68 @@ enum DetailCategory: String, Sendable {
     case app, domain, pdf
 }
 
+/// 单项使用趋势的查询维度。
+enum UsageQueryDimension: String, CaseIterable, Identifiable, Sendable {
+    case app, domain
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .app: return "App"
+        case .domain: return "域名"
+        }
+    }
+}
+
+/// 单项使用趋势支持的时间范围。全部选项都按自然月展示，避免横轴粒度混乱。
+enum UsageQueryRange: String, CaseIterable, Identifiable, Sendable {
+    case recentSixMonths
+    case recentTwelveMonths
+    case currentYear
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .recentSixMonths: return "近 6 个月"
+        case .recentTwelveMonths: return "近 12 个月"
+        case .currentYear: return "今年"
+        }
+    }
+
+    func interval(containing date: Date, calendar: Calendar) -> DateInterval? {
+        // 1. 先取当前自然月或自然年的稳定边界，保证图表始终从完整月份开始。
+        switch self {
+        case .recentSixMonths, .recentTwelveMonths:
+            guard let currentMonth = calendar.dateInterval(of: .month, for: date) else { return nil }
+            let monthOffset = self == .recentSixMonths ? -5 : -11
+            guard let start = calendar.date(byAdding: .month, value: monthOffset, to: currentMonth.start) else {
+                return nil
+            }
+
+            // 2. 末月只统计到当前时刻，避免把尚未发生的月份尾部误解为缺失数据。
+            return DateInterval(start: start, end: date)
+
+        case .currentYear:
+            guard let year = calendar.dateInterval(of: .year, for: date) else { return nil }
+            return DateInterval(start: year.start, end: date)
+        }
+    }
+}
+
 /// 每日总计时长
 struct DaySummary: Identifiable, Sendable {
     let date: Date
     let totalTime: TimeInterval
     var id: Date { date }
+}
+
+/// 某个 App 或域名在一个自然月中的累计使用时长。
+struct MonthlyUsageSummary: Identifiable, Sendable {
+    let monthStart: Date
+    let totalTime: TimeInterval
+    var id: Date { monthStart }
 }
 
 /// 排行榜单项
@@ -1033,10 +1090,22 @@ final class StatisticsEngine {
     var filterComputationGeneration: UInt = 0
     var isLoadingBaseData = false
 
+    // 单项使用查询独立于概览周期，避免切换查询对象时重算整张统计页。
+    var usageQueryLogs: [PreparedLog] = []
+    var usageAppOptions: [FilterOption] = []
+    var usageDomainOptions: [FilterOption] = []
+    var monthlyUsageSummaries: [MonthlyUsageSummary] = []
+    var usageQueryTotalDuration: TimeInterval = 0
+    var usageQueryGeneration: UInt = 0
+    var isLoadingUsageQuery = false
+
     private var baseDataLoadingTask: Task<Void, Never>?
     private var baseDataLoadingToken: UInt = 0
     private var filterComputationTask: Task<Void, Never>?
     private var filterComputationToken: UInt = 0
+    private var usageQueryLoadingTask: Task<Void, Never>?
+    private var usageQueryLoadingToken: UInt = 0
+    private var usageQueryInterval: DateInterval?
     private let calendar = Calendar.current
 
     // MARK: - Data Refreshing
@@ -1045,18 +1114,26 @@ final class StatisticsEngine {
         // 关闭统计窗口后立即让后台读取和聚合失效，避免用户已经离开页面时仍继续占用 CPU 与磁盘。
         baseDataLoadingTask?.cancel()
         filterComputationTask?.cancel()
+        usageQueryLoadingTask?.cancel()
         baseDataLoadingToken &+= 1
         filterComputationToken &+= 1
+        usageQueryLoadingToken &+= 1
         baseDataLoadingTask = nil
         filterComputationTask = nil
+        usageQueryLoadingTask = nil
         isLoadingBaseData = false
+        isLoadingUsageQuery = false
     }
 
     /// 刷新选定周期下的底量数据，执行数据库抓取并清洗
     func refreshBaseData(for range: StatisticsRange, modelContext: ModelContext, whitelist: WhitelistManager) {
         baseDataLoadingTask?.cancel()
         filterComputationTask?.cancel()
+        usageQueryLoadingTask?.cancel()
         baseDataLoadingToken &+= 1
+        usageQueryLoadingToken &+= 1
+        usageQueryLoadingTask = nil
+        isLoadingUsageQuery = false
 
         let token = baseDataLoadingToken
         let databaseURL = ActivityLogSnapshotStore.databaseURL()
@@ -1093,6 +1170,97 @@ final class StatisticsEngine {
                 self.isLoadingBaseData = false
             }
         }
+    }
+
+    /// 读取单项使用查询所需的底量数据；App 和域名选项共用同一批日志，切换维度无需重复访问磁盘。
+    func refreshUsageQueryData(for range: UsageQueryRange, whitelist: WhitelistManager) {
+        baseDataLoadingTask?.cancel()
+        filterComputationTask?.cancel()
+        usageQueryLoadingTask?.cancel()
+        baseDataLoadingToken &+= 1
+        filterComputationToken &+= 1
+        usageQueryLoadingToken &+= 1
+        baseDataLoadingTask = nil
+        filterComputationTask = nil
+        isLoadingBaseData = false
+
+        let token = usageQueryLoadingToken
+        let now = Date()
+        let calendar = calendar
+        guard let interval = range.interval(containing: now, calendar: calendar) else {
+            usageQueryLogs = []
+            usageAppOptions = []
+            usageDomainOptions = []
+            monthlyUsageSummaries = []
+            usageQueryTotalDuration = 0
+            isLoadingUsageQuery = false
+            return
+        }
+
+        let databaseURL = ActivityLogSnapshotStore.databaseURL()
+        let whitelistSnapshot = WhitelistSnapshot(whitelist: whitelist)
+        isLoadingUsageQuery = true
+
+        usageQueryLoadingTask = Task.detached(priority: .userInitiated) {
+            // 1. 使用现有按日聚合缓存读取目标月份，避免查询一年数据时重新构建全部 SwiftData 对象。
+            let logs = ActivityAggregateCacheStore.fetchPreparedLogs(
+                databaseURL: databaseURL,
+                interval: interval,
+                whitelist: whitelistSnapshot,
+                calendar: calendar
+            )
+
+            guard !Task.isCancelled else { return }
+
+            // 2. 查询页统计“已记录的全部使用时间”；学习榜仍沿用原规则单独排除娱乐记录。
+            let appOptions = Self.buildFilterOptions(from: logs, dimension: .app)
+            let domainOptions = Self.buildFilterOptions(from: logs, dimension: .domain)
+
+            await MainActor.run {
+                guard token == self.usageQueryLoadingToken else { return }
+
+                // 3. 整批落地后再递增版本，让视图先校验当前选择，再生成对应月度柱状数据。
+                self.usageQueryInterval = interval
+                self.usageQueryLogs = logs
+                self.usageAppOptions = appOptions
+                self.usageDomainOptions = domainOptions
+                self.usageQueryGeneration &+= 1
+                self.isLoadingUsageQuery = false
+            }
+        }
+    }
+
+    /// 根据用户选中的 App 或域名，在内存中快速生成按月趋势。
+    func updateUsageQuery(for dimension: UsageQueryDimension, itemName: String?) {
+        guard let interval = usageQueryInterval else {
+            monthlyUsageSummaries = []
+            usageQueryTotalDuration = 0
+            return
+        }
+
+        // 1. 只保留与当前维度和名称完全匹配的日志，避免相似 App 名或子域名互相串入。
+        let normalizedName = itemName?.lowercased()
+        let matchingLogs = usageQueryLogs.filter { log in
+            guard let normalizedName else { return false }
+
+            switch dimension {
+            case .app:
+                return log.appName.lowercased() == normalizedName
+            case .domain:
+                return log.resolvedDomain?.lowercased() == normalizedName
+            }
+        }
+
+        // 2. 补齐范围内所有自然月，即使当月为零也保留柱位，让时间轴连续且可比较。
+        let summaries = Self.monthlyUsageSummaries(
+            for: matchingLogs,
+            interval: interval,
+            calendar: calendar
+        )
+
+        // 3. 同步回写图表和总计，切换对象时无需重新读取数据库。
+        monthlyUsageSummaries = summaries
+        usageQueryTotalDuration = summaries.reduce(0) { $0 + $1.totalTime }
     }
 
     /// 应用过滤条件（如搜索字词、内容分类、应用白名单等），在独立线程中执行大量聚合和报告生成计算
@@ -1422,6 +1590,46 @@ final class StatisticsEngine {
     nonisolated private static func buildFilterOptions(from logs: [PreparedLog], dimension: RankingDimension) -> [FilterOption] {
         Self.rankingEntries(for: logs, dimension: dimension).map {
             FilterOption(name: $0.name, totalTime: $0.totalTime)
+        }
+    }
+
+    nonisolated private static func monthlyUsageSummaries(
+        for logs: [PreparedLog],
+        interval: DateInterval,
+        calendar: Calendar
+    ) -> [MonthlyUsageSummary] {
+        // 1. 按自然月建立连续的零值桶，当前月也只覆盖查询区间内已经发生的部分。
+        guard let firstMonth = calendar.dateInterval(of: .month, for: interval.start)?.start else {
+            return []
+        }
+
+        var monthStarts: [Date] = []
+        var cursor = firstMonth
+        while cursor < interval.end {
+            monthStarts.append(cursor)
+            guard let nextMonth = calendar.date(byAdding: .month, value: 1, to: cursor) else { break }
+            cursor = nextMonth
+        }
+
+        var durationByMonth = Dictionary(uniqueKeysWithValues: monthStarts.map { ($0, 0.0) })
+
+        // 2. 聚合缓存以自然日为最小边界，因此按日志所属自然月累加可保持与现有日/月统计语义一致。
+        for log in logs {
+            guard log.startTime >= interval.start,
+                  log.startTime < interval.end,
+                  let monthStart = calendar.dateInterval(of: .month, for: log.startTime)?.start,
+                  durationByMonth[monthStart] != nil else {
+                continue
+            }
+            durationByMonth[monthStart, default: 0] += log.duration
+        }
+
+        // 3. 依时间顺序输出，Swift Charts 可以稳定复用同一组月份坐标。
+        return monthStarts.map { monthStart in
+            MonthlyUsageSummary(
+                monthStart: monthStart,
+                totalTime: durationByMonth[monthStart, default: 0]
+            )
         }
     }
 

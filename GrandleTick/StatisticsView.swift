@@ -4,12 +4,29 @@ import Charts
 
 // MARK: - Main Statistics View
 
+private enum StatisticsPage: String, CaseIterable, Identifiable {
+    case overview
+    case usageQuery
+    case records
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overview: return "概览"
+        case .usageQuery: return "使用查询"
+        case .records: return "记录明细"
+        }
+    }
+}
+
 struct StatisticsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var engine = StatisticsEngine()
     @State private var whitelist = WhitelistManager.shared
+    @State private var selectedPage: StatisticsPage = .overview
     @State private var selectedRange: StatisticsRange = .week
     @State private var selectedDimension: RankingDimension = .app
     @State private var searchText: String = ""
@@ -19,151 +36,29 @@ struct StatisticsView: View {
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showAnnualReport = false
     @State private var contentVisible = false
+    @State private var selectedUsageDimension: UsageQueryDimension = .app
+    @State private var selectedUsageRange: UsageQueryRange = .recentTwelveMonths
+    @State private var selectedUsageItem: String?
+    @State private var selectedUsageMonth: Date?
 
     private let calendar = Calendar.current
 
     var body: some View {
-        let hasBaseRangeData = !engine.baseRangeLogs.isEmpty
-
         ZStack {
             // 1. 数据中心直接延展主菜单的系统浅灰底色，不再制造独立 Dashboard 渐变。
             AppDesign.appBackground.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // 2. 顶部浮动毛玻璃控制栏，包含时间范围选项与翻页逻辑。
-                headerSection(totalDuration: engine.rangeTotalDuration)
+                // 2. 顶部先划分三种用户任务，概览、单项查询和记录管理不再堆叠在同一条长页面中。
+                headerSection
 
-                if !hasBaseRangeData {
-                    emptyStateView
-                } else {
-                    ScrollView {
-                        // LazyVStack 只创建视口附近的重型图表和明细，避免打开页面时一次性构建整棵长列表。
-                        LazyVStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
-                            // 3. 统计核心卡片组，提供总时长、活跃天数等核心指标。
-                            overviewCardsGrid
-
-                            // 4. 双环形占比图，并排展示学习/休闲占比和学习来源分布。
-                            HStack(spacing: 16) {
-                                LearningVsEntertainmentDonutCard(
-                                    studyDuration: engine.studyDuration,
-                                    entertainmentDuration: engine.entertainmentDuration,
-                                    chartDataGeneration: engine.filterComputationGeneration,
-                                    formatDuration: formatCompactDuration
-                                )
-
-                                ContentCategoryDonutCard(
-                                    websiteDuration: engine.websiteDuration,
-                                    pdfDuration: engine.pdfDuration,
-                                    totalDuration: engine.studyDuration,
-                                    chartDataGeneration: engine.filterComputationGeneration,
-                                    formatDuration: formatCompactDuration
-                                )
-                            }
-
-                            // 5. 每日趋势图（交互式柱状图，支持用户拖拽或点击单天）。
-                            RangeTrendSection(
-                                daySummaries: engine.daySummaries,
-                                selectedDay: engine.selectedDay,
-                                chartDataGeneration: engine.filterComputationGeneration,
-                                onSelectDay: { engine.updateSelectedDay($0) },
-                                formatDuration: formatCompactDuration
-                            )
-
-                            // 6. 24 小时节奏段，包含时段面积图与作息最早最晚时间卡片。
-                            RhythmSection(
-                                hourlyDurations: engine.hourlyDurations,
-                                primaryTimeSlot: engine.primaryTimeSlot,
-                                earliestStudyStart: engine.earliestStudyStart,
-                                latestStudyEnd: engine.latestStudyEnd,
-                                chartDataGeneration: engine.filterComputationGeneration,
-                                formatDuration: formatCompactDuration,
-                                formatClock: formatClock
-                            )
-
-                            // 7. App 学习时长分布，提供 App 占比环形图及前三排行。
-                            AppFocusDonutCard(
-                                topApps: engine.topStudyApps,
-                                totalDuration: engine.studyDuration,
-                                chartDataGeneration: engine.filterComputationGeneration,
-                                formatDuration: formatCompactDuration
-                            )
-
-                            // 8. 常用网站与常用 PDF 分布（并排列表排行）。
-                            HStack(spacing: 16) {
-                                ReportRankingPanel(
-                                    title: "常用网站（前三）",
-                                    items: engine.topWebsites,
-                                    tint: AppDesign.websiteTeal,
-                                    formatDuration: formatCompactDuration
-                                )
-
-                                ReportRankingPanel(
-                                    title: "常用 PDF（前三）",
-                                    items: engine.topPDFs,
-                                    tint: AppDesign.documentOrange,
-                                    formatDuration: formatCompactDuration
-                                )
-                            }
-
-                            // 9. 自定义筛选器区域，用户可自行搜索、过滤内容类型和指定域名。
-                            FilterSection(
-                                searchText: $searchText,
-                                selectedContentFilter: $selectedContentFilter,
-                                selectedAppFilter: $selectedAppFilter,
-                                selectedDomainFilter: $selectedDomainFilter,
-                                appOptions: engine.appFilterOptions,
-                                domainOptions: engine.domainFilterOptions,
-                                formatDuration: formatCompactDuration
-                            )
-
-                            if engine.rangeLogs.isEmpty {
-                                filteredEmptyStateView
-                            } else {
-                                // 10. 日期滚动点选器。
-                                DayPickerSection(
-                                    daySummaries: engine.daySummaries,
-                                    selectedDay: engine.selectedDay,
-                                    onSelect: { engine.updateSelectedDay($0) },
-                                    formatDuration: formatCompactDuration,
-                                    formatDate: formatShortDate
-                                )
-
-                                // 11. 当日详情列表（包含右键菜单删除功能）。
-                                SelectedDaySection(
-                                    selectedDay: engine.selectedDay,
-                                    appSummaries: engine.selectedDayAppSummaries,
-                                    domainSummaries: engine.selectedDayDomainSummaries,
-                                    pdfSummaries: engine.selectedDayPdfSummaries,
-                                    formatDuration: formatCompactDuration,
-                                    formatDate: formatLongDate,
-                                    onDelete: { category, summaryName, detailName in
-                                        deleteLogs(
-                                            on: engine.selectedDay,
-                                            category: category,
-                                            summaryName: summaryName,
-                                            detailName: detailName
-                                        )
-                                    }
-                                )
-
-                                // 12. 全周期大排行榜（前八名，支持维度切换）。
-                                RankingSection(
-                                    selectedDimension: $selectedDimension,
-                                    rankingEntries: engine.rankingEntries,
-                                    formatDuration: formatCompactDuration
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 16)
-                        .padding(.bottom, 32)
-                        .opacity(contentVisible ? 1 : 0)
-                        .offset(y: reduceMotion || contentVisible ? 0 : 6)
-                    }
-                }
+                // 3. 三个页面共用窗口与统计引擎，但只创建当前页面需要的图表和列表。
+                pageContent
+                    .opacity(contentVisible ? 1 : 0)
+                    .offset(y: reduceMotion || contentVisible ? 0 : 6)
             }
             
-            // 12. 年度学习报告采用应用内悬浮卡片机制，避免系统级 Sheet 窗口自带的白色直角边框与阻碍退出问题。
+            // 4. 年度学习报告采用应用内悬浮卡片机制，避免系统级 Sheet 窗口自带的白色直角边框与阻碍退出问题。
             if showAnnualReport {
                 // 黑色半透明背景遮罩阻断下层点击，确保年度报告弹层交互独立。
                 Color.black.opacity(0.45)
@@ -203,10 +98,26 @@ struct StatisticsView: View {
         }
         // 使用 default mode，用户拖动滚动条或触控板滚动时系统会自然暂停刷新，避免滚动中重算整页。
         .onReceive(Timer.publish(every: 60, tolerance: 8, on: .main, in: .default).autoconnect()) { _ in
-            refreshRangeData()
+            refreshActivePageData()
         }
-        .onChange(of: whitelist.whitelistedApps) { _, _ in refreshRangeData() }
-        .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshRangeData() }
+        .onChange(of: whitelist.whitelistedApps) { _, _ in refreshActivePageData() }
+        .onChange(of: whitelist.whitelistedDomains) { _, _ in refreshActivePageData() }
+        .onChange(of: selectedPage) { _, newPage in
+            if !reduceMotion {
+                contentVisible = false
+                DispatchQueue.main.async {
+                    withAnimation(AppDesign.animationCurve) {
+                        contentVisible = true
+                    }
+                }
+            }
+
+            if newPage == .usageQuery {
+                refreshUsageQueryData()
+            } else {
+                refreshRangeData()
+            }
+        }
         .onChange(of: selectedRange) { _, _ in
             // 切换周期时先轻微淡出旧内容，新统计回写后再淡入。
             if !reduceMotion {
@@ -225,7 +136,27 @@ struct StatisticsView: View {
                 contentVisible = true
             }
         }
+        .onChange(of: engine.usageQueryGeneration) { _, _ in
+            sanitizeUsageQuerySelection()
+            withAnimation(reduceMotion ? nil : AppDesign.animationCurve) {
+                contentVisible = true
+            }
+        }
         .onChange(of: selectedDimension) { _, _ in engine.updateRanking(for: selectedDimension) }
+        .onChange(of: selectedUsageDimension) { _, _ in
+            selectedUsageItem = nil
+            selectedUsageMonth = nil
+            sanitizeUsageQuerySelection()
+        }
+        .onChange(of: selectedUsageRange) { _, _ in
+            selectedUsageItem = nil
+            selectedUsageMonth = nil
+            refreshUsageQueryData()
+        }
+        .onChange(of: selectedUsageItem) { _, newValue in
+            selectedUsageMonth = nil
+            engine.updateUsageQuery(for: selectedUsageDimension, itemName: newValue)
+        }
         .onChange(of: searchText) { _, _ in scheduleSearchRefresh() }
         .onChange(of: selectedContentFilter) { _, _ in refreshFiltersOnly() }
         .onChange(of: selectedAppFilter) { _, _ in refreshFiltersOnly() }
@@ -239,7 +170,7 @@ struct StatisticsView: View {
     // MARK: - Subviews
 
     @ViewBuilder
-    private func headerSection(totalDuration: TimeInterval) -> some View {
+    private var headerSection: some View {
         VStack(spacing: 12) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -268,8 +199,8 @@ struct StatisticsView: View {
 
                 Spacer()
 
-                // 上一期/下一期翻页控制（仅在本周、本月、今年模式下显式启用）
-                if selectedRange != .all {
+                // 使用查询拥有独立的月份范围，其它页面继续沿用原有周期翻页能力。
+                if selectedPage != .usageQuery, selectedRange != .all {
                     HStack(spacing: 12) {
                         ReportPagerButton(
                             systemImage: "chevron.left",
@@ -288,13 +219,27 @@ struct StatisticsView: View {
                             action: { shiftReferencePeriod(by: 1) }
                         )
                     }
-                } else {
+                } else if selectedPage != .usageQuery {
                     Text("全部历史数据")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
 
+            HStack(spacing: 8) {
+                ForEach(StatisticsPage.allCases) { page in
+                    Button(page.title) {
+                        selectedPage = page
+                    }
+                    .buttonStyle(AppCapsuleButtonStyle(
+                        role: selectedPage == page ? .primary : .secondary,
+                        compact: true
+                    ))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if selectedPage != .usageQuery {
             HStack(spacing: 8) {
                 ForEach(StatisticsRange.allCases) { range in
                     Button(range.shortTitle) {
@@ -307,10 +252,132 @@ struct StatisticsView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch selectedPage {
+        case .overview:
+            overviewPage
+        case .usageQuery:
+            usageQueryPage
+        case .records:
+            recordsPage
+        }
+    }
+
+    @ViewBuilder
+    private var overviewPage: some View {
+        if engine.baseRangeLogs.isEmpty {
+            emptyStateView
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
+                    overviewCardsGrid
+
+                    LearningLeisureSummaryBar(
+                        studyDuration: engine.studyDuration,
+                        entertainmentDuration: engine.entertainmentDuration,
+                        formatDuration: formatCompactDuration
+                    )
+
+                    RangeTrendSection(
+                        daySummaries: engine.daySummaries,
+                        selectedDay: engine.selectedDay,
+                        chartDataGeneration: engine.filterComputationGeneration,
+                        onSelectDay: { engine.updateSelectedDay($0) },
+                        formatDuration: formatCompactDuration
+                    )
+
+                    RankingSection(
+                        selectedDimension: $selectedDimension,
+                        rankingEntries: engine.rankingEntries,
+                        formatDuration: formatCompactDuration
+                    )
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
+        }
+    }
+
+    private var usageQueryPage: some View {
+        ScrollView {
+            UsageQuerySection(
+                selectedDimension: $selectedUsageDimension,
+                selectedRange: $selectedUsageRange,
+                selectedItem: $selectedUsageItem,
+                selectedMonth: $selectedUsageMonth,
+                appOptions: engine.usageAppOptions,
+                domainOptions: engine.usageDomainOptions,
+                monthlySummaries: engine.monthlyUsageSummaries,
+                totalDuration: engine.usageQueryTotalDuration,
+                isLoading: engine.isLoadingUsageQuery,
+                formatDuration: formatCompactDuration
+            )
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
+            .padding(.bottom, 32)
+        }
+    }
+
+    @ViewBuilder
+    private var recordsPage: some View {
+        if engine.baseRangeLogs.isEmpty {
+            emptyStateView
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
+                    FilterSection(
+                        searchText: $searchText,
+                        selectedContentFilter: $selectedContentFilter,
+                        selectedAppFilter: $selectedAppFilter,
+                        selectedDomainFilter: $selectedDomainFilter,
+                        appOptions: engine.appFilterOptions,
+                        domainOptions: engine.domainFilterOptions,
+                        formatDuration: formatCompactDuration
+                    )
+
+                    if engine.rangeLogs.isEmpty {
+                        filteredEmptyStateView
+                    } else {
+                        DayPickerSection(
+                            daySummaries: engine.daySummaries,
+                            selectedDay: engine.selectedDay,
+                            onSelect: { engine.updateSelectedDay($0) },
+                            formatDuration: formatCompactDuration,
+                            formatDate: formatShortDate
+                        )
+
+                        SelectedDaySection(
+                            selectedDay: engine.selectedDay,
+                            appSummaries: engine.selectedDayAppSummaries,
+                            domainSummaries: engine.selectedDayDomainSummaries,
+                            pdfSummaries: engine.selectedDayPdfSummaries,
+                            formatDuration: formatCompactDuration,
+                            formatDate: formatLongDate,
+                            onDelete: { category, summaryName, detailName in
+                                deleteLogs(
+                                    on: engine.selectedDay,
+                                    category: category,
+                                    summaryName: summaryName,
+                                    detailName: detailName
+                                )
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
+        }
     }
 
     @ViewBuilder
@@ -345,10 +412,12 @@ struct StatisticsView: View {
                         .fill(AppDesign.tintedSurface(AppDesign.primaryBlue, opacity: 0.13))
                 )
 
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                LazyVGrid(
+                    columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
+                    spacing: 8
+                ) {
                     OverviewMetric(title: "日均学习", value: formatCompactDuration(engine.averageDailyDuration), icon: "chart.bar.fill", tint: AppDesign.websiteTeal)
                     OverviewMetric(title: "活跃天数", value: "\(engine.activeDays) 天", icon: "calendar.badge.checkmark", tint: AppDesign.successGreen)
-                    OverviewMetric(title: "最长连续", value: "\(engine.longestStreak) 天", icon: "flame.fill", tint: AppDesign.documentOrange)
                     OverviewMetric(
                         title: "与上期对比",
                         value: formatComparisonValue(engine.comparison),
@@ -371,7 +440,7 @@ struct StatisticsView: View {
                 .foregroundColor(.secondary.opacity(0.35))
             Text("当前时间范围没有记录")
                 .font(.headline)
-            Text("使用白名单中的应用或网站后，这里会显示统计数据。")
+            Text("产生新的 App 或网站使用记录后，这里会显示统计数据。")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -403,6 +472,19 @@ struct StatisticsView: View {
         engine.refreshBaseData(for: selectedRange, modelContext: modelContext, whitelist: whitelist)
     }
 
+    private func refreshUsageQueryData() {
+        engine.refreshUsageQueryData(for: selectedUsageRange, whitelist: whitelist)
+    }
+
+    private func refreshActivePageData() {
+        // 概览和记录明细共享周期数据；使用查询则读取自己独立的自然月范围。
+        if selectedPage == .usageQuery {
+            refreshUsageQueryData()
+        } else {
+            refreshRangeData()
+        }
+    }
+
     private func refreshFiltersOnly() {
         engine.applyFilters(
             searchText: searchText,
@@ -428,6 +510,23 @@ struct StatisticsView: View {
         if let selectedDomainFilter,
            !engine.domainFilterOptions.contains(where: { $0.name == selectedDomainFilter }) {
             self.selectedDomainFilter = nil
+        }
+    }
+
+    private func sanitizeUsageQuerySelection() {
+        // 1. 维度切换或时间范围刷新后，只保留仍存在于新选项集中的查询对象。
+        let options = selectedUsageDimension == .app
+            ? engine.usageAppOptions
+            : engine.usageDomainOptions
+        let resolvedItem = selectedUsageItem.flatMap { current in
+            options.contains(where: { $0.name == current }) ? current : nil
+        } ?? options.first?.name
+
+        // 2. 选择发生变化时交给 onChange 统一刷新；未变化时主动重算刚加载的新一批月度数据。
+        if selectedUsageItem != resolvedItem {
+            selectedUsageItem = resolvedItem
+        } else {
+            engine.updateUsageQuery(for: selectedUsageDimension, itemName: resolvedItem)
         }
     }
 
@@ -571,6 +670,287 @@ private struct OverviewMetric: View {
             RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
                 .fill(AppDesign.tintedSurface(tint, opacity: 0.08))
         )
+    }
+}
+
+private struct LearningLeisureSummaryBar: View {
+    let studyDuration: TimeInterval
+    let entertainmentDuration: TimeInterval
+    let formatDuration: (TimeInterval) -> String
+
+    private var totalDuration: TimeInterval {
+        studyDuration + entertainmentDuration
+    }
+
+    private var studyShare: Double {
+        totalDuration > 0 ? studyDuration / totalDuration : 0
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("学习与休闲")
+                    .font(.headline)
+                Spacer()
+                Text("学习占比 \(Int((studyShare * 100).rounded()))%")
+                    .font(.caption)
+                    .foregroundStyle(AppDesign.secondaryText)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(AppDesign.leisurePurple.opacity(0.72))
+
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(AppDesign.primaryBlue)
+                        .frame(width: geometry.size.width * studyShare)
+                }
+            }
+            .frame(height: 9)
+
+            HStack(spacing: 20) {
+                ReportLegendStat(title: "学习", value: formatDuration(studyDuration), tint: AppDesign.primaryBlue)
+                ReportLegendStat(title: "休闲", value: formatDuration(entertainmentDuration), tint: AppDesign.leisurePurple)
+                Spacer()
+            }
+        }
+        .padding(18)
+        .statisticsPanel()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("学习与休闲使用分布")
+        .accessibilityValue("学习 \(formatDuration(studyDuration))，休闲 \(formatDuration(entertainmentDuration))")
+    }
+}
+
+private struct UsageQuerySection: View {
+    @Binding var selectedDimension: UsageQueryDimension
+    @Binding var selectedRange: UsageQueryRange
+    @Binding var selectedItem: String?
+    @Binding var selectedMonth: Date?
+    let appOptions: [FilterOption]
+    let domainOptions: [FilterOption]
+    let monthlySummaries: [MonthlyUsageSummary]
+    let totalDuration: TimeInterval
+    let isLoading: Bool
+    let formatDuration: (TimeInterval) -> String
+
+    private var options: [FilterOption] {
+        selectedDimension == .app ? appOptions : domainOptions
+    }
+
+    private var selectedSummary: MonthlyUsageSummary? {
+        guard let selectedMonth else { return monthlySummaries.last }
+        return monthlySummaries.first { summary in
+            Calendar.current.isDate(summary.monthStart, equalTo: selectedMonth, toGranularity: .month)
+        } ?? monthlySummaries.last
+    }
+
+    private var maximumHours: Double {
+        max(1, (monthlySummaries.map(\.totalTime).max() ?? 0) / 3600 * 1.15)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppDesign.sectionSpacing) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("查询对象")
+                            .font(.headline)
+                        Text("按自然月查看某个 App 或域名的全部已记录使用时长")
+                            .font(.caption)
+                            .foregroundStyle(AppDesign.secondaryText)
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 8) {
+                        ForEach(UsageQueryDimension.allCases) { dimension in
+                            Button(dimension.title) {
+                                selectedDimension = dimension
+                            }
+                            .buttonStyle(AppCapsuleButtonStyle(
+                                role: selectedDimension == dimension ? .primary : .secondary,
+                                compact: true
+                            ))
+                        }
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Menu {
+                        ForEach(options) { option in
+                            Button {
+                                selectedItem = option.name
+                            } label: {
+                                HStack {
+                                    Text(option.name)
+                                    Spacer()
+                                    Text(formatDuration(option.totalTime))
+                                }
+                            }
+                        }
+                    } label: {
+                        FilterChip(
+                            title: selectedDimension.title,
+                            value: selectedItem ?? "请选择查询对象"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(options.isEmpty)
+
+                    HStack(spacing: 8) {
+                        ForEach(UsageQueryRange.allCases) { range in
+                            Button(range.title) {
+                                selectedRange = range
+                            }
+                            .buttonStyle(AppCapsuleButtonStyle(
+                                role: selectedRange == range ? .primary : .secondary,
+                                compact: true
+                            ))
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .statisticsPanel(isSecondary: true)
+
+            if isLoading {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在汇总月度使用时间…")
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                }
+                .frame(maxWidth: .infinity, minHeight: 290)
+                .statisticsPanel()
+            } else if options.isEmpty || selectedItem == nil {
+                VStack(spacing: 12) {
+                    Image(systemName: selectedDimension == .app ? "app.dashed" : "network.slash")
+                        .font(.system(size: 34))
+                        .foregroundStyle(AppDesign.tertiaryText)
+                    Text(selectedDimension == .app ? "这个时间范围没有 App 记录" : "这个时间范围没有域名记录")
+                        .font(.headline)
+                    Text("可以切换查询类型或扩大月份范围。")
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                }
+                .frame(maxWidth: .infinity, minHeight: 290)
+                .statisticsPanel()
+            } else {
+                monthlyChart
+            }
+        }
+    }
+
+    private var monthlyChart: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(selectedItem ?? "") 使用趋势")
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(formatMonthRange())
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("区间总计")
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                    Text(formatDuration(totalDuration))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(AppDesign.primaryBlue)
+                }
+            }
+
+            Chart(monthlySummaries) { summary in
+                BarMark(
+                    x: .value("月份", summary.monthStart, unit: .month),
+                    y: .value("小时", summary.totalTime / 3600)
+                )
+                .foregroundStyle(
+                    isSelected(summary)
+                        ? AppDesign.primaryBlue
+                        : AppDesign.primaryBlue.opacity(0.34)
+                )
+                .cornerRadius(5)
+            }
+            .frame(height: 260)
+            .chartYScale(domain: 0...maximumHours)
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine().foregroundStyle(Color.primary.opacity(0.06))
+                    AxisValueLabel {
+                        if let hours = value.as(Double.self) {
+                            Text(hours == 0 ? "0h" : "\(Int(hours.rounded()))h")
+                                .font(.system(size: 9))
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(
+                    values: .stride(
+                        by: .month,
+                        count: monthlySummaries.count > 8 ? 2 : 1
+                    )
+                ) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(formatAxisMonth(date))
+                                .font(.system(size: 9))
+                        }
+                    }
+                }
+            }
+            .chartXSelection(value: $selectedMonth)
+            .id("\(selectedDimension.rawValue)|\(selectedRange.rawValue)|\(selectedItem ?? "")")
+
+            HStack {
+                Text("横轴：月份 · 纵轴：小时")
+                    .font(.caption)
+                    .foregroundStyle(AppDesign.secondaryText)
+                Spacer()
+                if let selectedSummary {
+                    Text("\(formatMonthYear(selectedSummary.monthStart)) · \(formatDuration(selectedSummary.totalTime))")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+            }
+        }
+        .padding(18)
+        .statisticsPanel()
+    }
+
+    private func isSelected(_ summary: MonthlyUsageSummary) -> Bool {
+        guard let selectedSummary else { return false }
+        return Calendar.current.isDate(
+            summary.monthStart,
+            equalTo: selectedSummary.monthStart,
+            toGranularity: .month
+        )
+    }
+
+    private func formatMonthRange() -> String {
+        guard let first = monthlySummaries.first?.monthStart,
+              let last = monthlySummaries.last?.monthStart else {
+            return selectedRange.title
+        }
+        return "\(formatMonthYear(first))—\(formatMonthYear(last)) · 按月汇总"
+    }
+
+    private func formatAxisMonth(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.month], from: date)
+        return "\(components.month ?? 0)月"
+    }
+
+    private func formatMonthYear(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month], from: date)
+        return "\(components.year ?? 0)年\(components.month ?? 0)月"
     }
 }
 
