@@ -419,7 +419,8 @@ final class ActivityTracker {
                 hasMatchedDomain = true
             } else {
                 var found = false
-                for domain in WhitelistManager.shared.whitelistedDomains {
+                let allDomains = WhitelistManager.shared.whitelistedDomains + WhitelistManager.shared.blacklistedDomains
+                for domain in allDomains {
                     let keyword = domain.components(separatedBy: ".").first ?? domain
                     if lowercasedRawTitle.contains(keyword) || (keyword == "bilibili" && lowercasedRawTitle.contains("哔哩哔哩")) {
                         displayTitle = rawTitle
@@ -623,7 +624,8 @@ final class ActivityTracker {
     }
 
     private func matchedWhitelistedDomainFromHost(_ host: String) -> String? {
-        WhitelistManager.shared.whitelistedDomains.first { domain in
+        let allDomains = WhitelistManager.shared.whitelistedDomains + WhitelistManager.shared.blacklistedDomains
+        return allDomains.first { domain in
             host == domain || host.hasSuffix(".\(domain)")
         }
     }

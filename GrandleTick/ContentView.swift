@@ -28,7 +28,24 @@ struct ContentView: View {
         let lowercasedAppName = appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
         
-        // 1. 如果是浏览器，需要进一步校验域名是否在白名单内，并对 B 站做特殊处理。
+        // 1. 黑名单优先校验：命中黑名单的应用或域名直接判定为娱乐休闲状态。
+        let isBlacklistedApp = WhitelistManager.shared.blacklistedApps.contains { app in
+            let lower = app.lowercased()
+            return lower == lowercasedAppName || lower.contains(lowercasedAppName) || lowercasedAppName.contains(lower)
+        }
+        if isBlacklistedApp {
+            return false
+        }
+        if isWebsite, let domain {
+            let isBlacklistedDomain = WhitelistManager.shared.blacklistedDomains.contains {
+                $0.lowercased() == domain.lowercased()
+            }
+            if isBlacklistedDomain {
+                return false
+            }
+        }
+
+        // 2. 如果是浏览器，需要进一步校验域名是否在白名单内，并对 B 站做特殊处理。
         if isWebsite {
             guard let domain else { return false }
             let isWhitelistedDomain = WhitelistManager.shared.whitelistedDomains.contains { $0.lowercased() == domain.lowercased() }
@@ -45,12 +62,12 @@ struct ContentView: View {
             return isWhitelistedDomain
         } 
         
-        // 2. 如果是 macOS 预览 App，需要明确判断是否正在查看 PDF 文件以归为学习。
+        // 3. 如果是 macOS 预览 App，需要明确判断是否正在查看 PDF 文件以归为学习。
         if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
             return windowTitle.lowercased().contains(".pdf")
         } 
         
-        // 3. 其他常规应用直接根据应用名称是否在白名单中来判断是否属于专注学习。
+        // 4. 其他常规应用直接根据应用名称是否在白名单中来判断是否属于专注学习。
         return WhitelistManager.shared.whitelistedApps.contains { app in
             let lowercasedApp = app.lowercased()
             return lowercasedApp == lowercasedAppName || lowercasedApp.contains(lowercasedAppName) || lowercasedAppName.contains(lowercasedApp)
@@ -204,7 +221,7 @@ struct ContentView: View {
             
             VStack(spacing: 10) {
                 ActionCapsuleButton(
-                    title: "管理白名单",
+                    title: "管理白名单与黑名单",
                     systemImage: "checklist",
                     tint: AppDesign.primaryBlue,
                     action: openWhitelistWindow

@@ -80,7 +80,7 @@ final class FeatureWindowCoordinator: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        configure(window, title: "白名单", titlebarAppearsTransparent: true)
+        configure(window, title: "名单管理", titlebarAppearsTransparent: true)
         window.contentView = NSHostingView(
             rootView: WhitelistView().modelContext(modelContext)
         )

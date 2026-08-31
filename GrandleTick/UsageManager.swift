@@ -801,11 +801,23 @@ final class UsageManager {
         domain: String?,
         bilibiliIdentifier: String?
     ) -> Bool {
-        
         let lowercasedAppName = appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
+
+        // 1. 黑名单优先校验：命中黑名单的应用或域名直接判定为娱乐/休闲活动。
+        let isBlacklistedApp = WhitelistManager.shared.blacklistedApps.contains { app in
+            let lower = app.lowercased()
+            return lower == lowercasedAppName || lower.contains(lowercasedAppName) || lowercasedAppName.contains(lower)
+        }
+        let isBlacklistedDomain = domain.flatMap { d in
+            WhitelistManager.shared.blacklistedDomains.contains { $0.lowercased() == d.lowercased() }
+        } ?? false
+
+        if isBlacklistedApp || isBlacklistedDomain {
+            return false
+        }
         
-        // 1. 如果是浏览器，校验域名是否在白名单内，并对 B 站进行特殊指纹校验。
+        // 2. 如果是浏览器，校验域名是否在白名单内，并对 B 站进行特殊指纹校验。
         if isWebsite {
             guard let domain = domain else { return false }
             let isWhitelistedDomain = WhitelistManager.shared.whitelistedDomains.contains { $0.lowercased() == domain.lowercased() }
@@ -818,12 +830,12 @@ final class UsageManager {
             return isWhitelistedDomain
         } 
         
-        // 2. 如果是 PDF 查看器，校验是否正在查看 PDF 文件。
+        // 3. 如果是 PDF 查看器，校验是否正在查看 PDF 文件。
         if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
             return windowTitle.lowercased().contains(".pdf")
         } 
         
-        // 3. 其它本地应用匹配应用白名单。
+        // 4. 其它本地应用匹配应用白名单。
         return WhitelistManager.shared.whitelistedApps.contains { app in
             let lowercasedApp = app.lowercased()
             return lowercasedApp == lowercasedAppName || lowercasedApp.contains(lowercasedAppName) || lowercasedAppName.contains(lowercasedApp)
@@ -840,20 +852,32 @@ final class UsageManager {
         
         let lowercasedAppName = log.appName.lowercased()
         let isWebsite = lowercasedAppName.contains("safari") || lowercasedAppName.contains("chrome") || lowercasedAppName.contains("edge")
+
+        // 2. 黑名单优先拦截：命中黑名单应用直接归入非学习（娱乐）。
+        let isBlacklistedApp = whitelist.lowercasedBlacklistedApps.contains { app in
+            app == lowercasedAppName || app.contains(lowercasedAppName) || lowercasedAppName.contains(app)
+        }
+        if isBlacklistedApp {
+            return false
+        }
         
-        // 2. 浏览器日志需要对白名单和 B 站专属标识进行校验。
+        // 3. 浏览器日志需要对白名单和 B 站专属标识进行校验。
         if isWebsite {
             let resolvedDomain: String?
             if let domain = log.domain, !domain.isEmpty {
                 resolvedDomain = domain
             } else {
                 let lowercasedWindowTitle = log.windowTitle.lowercased()
-                resolvedDomain = whitelist.domainKeywords.first { entry in
+                let allKeywords = whitelist.domainKeywords + whitelist.blacklistedDomainKeywords
+                resolvedDomain = allKeywords.first { entry in
                     lowercasedWindowTitle.contains(entry.keyword) || (entry.keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩"))
                 }?.domain
             }
             
             guard let domain = resolvedDomain else { return false }
+            if whitelist.lowercasedBlacklistedDomainSet.contains(domain.lowercased()) {
+                return false
+            }
             let isWhitelistedDomain = whitelist.lowercasedDomainSet.contains(domain.lowercased())
             
             if domain == "bilibili.com" {
@@ -862,10 +886,10 @@ final class UsageManager {
             
             return isWhitelistedDomain
         } else if lowercasedAppName.contains("预览") || lowercasedAppName.contains("preview") {
-            // 3. PDF 校验。
+            // 4. PDF 校验。
             return log.windowTitle.lowercased().contains(".pdf")
         } else {
-            // 4. 应用白名单校验。
+            // 5. 应用白名单校验。
             return whitelist.lowercasedApps.contains { app in
                 app == lowercasedAppName || app.contains(lowercasedAppName) || lowercasedAppName.contains(app)
             }

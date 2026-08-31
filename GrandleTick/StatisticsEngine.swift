@@ -147,18 +147,29 @@ struct FilterCriteria: Sendable {
     let selectedDomainFilter: String?
 }
 
-/// 白名单规则的内存快照，用于线程安全的后台日志过滤与处理
+/// 白名单与黑名单规则的内存快照，用于线程安全的后台日志过滤与处理
 struct WhitelistSnapshot: Sendable {
     let lowercasedApps: [String]
     let domains: [String]
     let lowercasedDomainSet: Set<String>
     let domainKeywords: [(domain: String, keyword: String)]
+    let lowercasedBlacklistedApps: [String]
+    let blacklistedDomains: [String]
+    let lowercasedBlacklistedDomainSet: Set<String>
+    let blacklistedDomainKeywords: [(domain: String, keyword: String)]
 
     init(whitelist: WhitelistManager) {
         self.lowercasedApps = whitelist.whitelistedApps.map { $0.lowercased() }
         self.domains = whitelist.whitelistedDomains
         self.lowercasedDomainSet = Set(whitelist.whitelistedDomains.map { $0.lowercased() })
         self.domainKeywords = whitelist.whitelistedDomains.map { domain in
+            let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
+            return (domain: domain, keyword: keyword)
+        }
+        self.lowercasedBlacklistedApps = whitelist.blacklistedApps.map { $0.lowercased() }
+        self.blacklistedDomains = whitelist.blacklistedDomains
+        self.lowercasedBlacklistedDomainSet = Set(whitelist.blacklistedDomains.map { $0.lowercased() })
+        self.blacklistedDomainKeywords = whitelist.blacklistedDomains.map { domain in
             let keyword = domain.components(separatedBy: ".").first?.lowercased() ?? domain.lowercased()
             return (domain: domain, keyword: keyword)
         }
@@ -243,9 +254,19 @@ struct PreparedLog: Identifiable, Sendable {
         self.isPDF = isPDF
         self.isWebsite = isWebsite
         
-        // 5. 分类学习 vs 娱乐/休闲。白名单外的所有其它应用均归入娱乐/休闲。
+        // 5. 分类学习 vs 娱乐/休闲。黑名单优先归入娱乐，白名单命中归入学习。
+        let isBlacklistedApp = whitelist.lowercasedBlacklistedApps.contains {
+            $0 == lowercasedAppName || $0.contains(lowercasedAppName) || lowercasedAppName.contains($0)
+        }
+        let isBlacklistedDomain = resolvedDomain.flatMap { domain in
+            whitelist.lowercasedBlacklistedDomainSet.contains(domain.lowercased())
+        } ?? false
+
         let isStudy: Bool
-        if isWebsite {
+        if isBlacklistedApp || isBlacklistedDomain {
+            // 命中黑名单的应用或网站强制划入娱乐，不参与学习统计
+            isStudy = false
+        } else if isWebsite {
             let isWhitelistedDomain = resolvedDomain.flatMap { domain in
                 whitelist.lowercasedDomainSet.contains(domain.lowercased())
             } ?? false
@@ -269,9 +290,10 @@ struct PreparedLog: Identifiable, Sendable {
     private static func resolveDomain(for log: ActivityLogSnapshot, whitelist: WhitelistSnapshot) -> String? {
         // 如果数据库日志里有解析好的 domain，优先直接返回它以保留一般网站的域名数据
         if let domain = log.domain, !domain.isEmpty { return domain }
-        // 兜底从窗口标题中尝试提取白名单域名
+        // 兜底从窗口标题中尝试提取白名单或黑名单域名
         let lowercasedWindowTitle = log.windowTitle.lowercased()
-        return whitelist.domainKeywords.first { entry in lowercasedWindowTitle.contains(entry.keyword) || (entry.keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩")) }?.domain
+        let allKeywords = whitelist.domainKeywords + whitelist.blacklistedDomainKeywords
+        return allKeywords.first { entry in lowercasedWindowTitle.contains(entry.keyword) || (entry.keyword == "bilibili" && lowercasedWindowTitle.contains("哔哩哔哩")) }?.domain
     }
 }
 
@@ -430,10 +452,12 @@ enum ActivityAggregateCacheStore {
     private static var validatedDays: Set<AggregateCacheValidationKey> = []
 
     static func cacheVersion(for whitelist: WhitelistSnapshot) -> String {
-        // 白名单直接影响 isStudy 分类，因此缓存版本必须绑定当前规则输入，避免修改白名单后复用旧统计。
+        // 白名单与黑名单直接影响 isStudy 分类，因此缓存版本必须绑定当前规则输入，避免修改名单后复用旧统计。
         let apps = whitelist.lowercasedApps.sorted().joined(separator: ",")
         let domains = whitelist.domains.map { $0.lowercased() }.sorted().joined(separator: ",")
-        return "\(algorithmVersion)|apps=\(apps)|domains=\(domains)"
+        let blackApps = whitelist.lowercasedBlacklistedApps.sorted().joined(separator: ",")
+        let blackDomains = whitelist.blacklistedDomains.map { $0.lowercased() }.sorted().joined(separator: ",")
+        return "\(algorithmVersion)|apps=\(apps)|domains=\(domains)|blackApps=\(blackApps)|blackDomains=\(blackDomains)"
     }
 
     static func fetchPreparedLogs(
