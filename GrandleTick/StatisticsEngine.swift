@@ -86,6 +86,14 @@ struct MonthlyUsageSummary: Identifiable, Sendable {
     var id: Date { monthStart }
 }
 
+/// 某个自然月内固定四个日期段的累计使用时长。
+struct MonthlyWeekUsageSummary: Identifiable, Sendable {
+    let monthStart: Date
+    let weekIndex: Int
+    let totalTime: TimeInterval
+    var id: String { "\(monthStart.timeIntervalSinceReferenceDate)|\(weekIndex)" }
+}
+
 /// 排行榜单项
 struct RankingEntry: Identifiable, Sendable {
     let name: String
@@ -1106,6 +1114,7 @@ final class StatisticsEngine {
     var usageDomainOptions: [FilterOption] = []
     var usagePDFOptions: [FilterOption] = []
     var monthlyUsageSummaries: [MonthlyUsageSummary] = []
+    var monthlyWeekUsageSummaries: [MonthlyWeekUsageSummary] = []
     var usageQueryTotalDuration: TimeInterval = 0
     var usageQueryGeneration: UInt = 0
     var isLoadingUsageQuery = false
@@ -1204,6 +1213,7 @@ final class StatisticsEngine {
             usageDomainOptions = []
             usagePDFOptions = []
             monthlyUsageSummaries = []
+            monthlyWeekUsageSummaries = []
             usageQueryTotalDuration = 0
             isLoadingUsageQuery = false
             return
@@ -1248,6 +1258,7 @@ final class StatisticsEngine {
     func updateUsageQuery(for dimension: UsageQueryDimension, queryKey: String?) {
         guard let interval = usageQueryInterval else {
             monthlyUsageSummaries = []
+            monthlyWeekUsageSummaries = []
             usageQueryTotalDuration = 0
             return
         }
@@ -1283,8 +1294,15 @@ final class StatisticsEngine {
             calendar: calendar
         )
 
+        let weekSummaries = Self.monthlyWeekUsageSummaries(
+            for: matchingLogs,
+            interval: interval,
+            calendar: calendar
+        )
+
         // 3. 同步回写图表和总计，切换对象时无需重新读取数据库。
         monthlyUsageSummaries = summaries
+        monthlyWeekUsageSummaries = weekSummaries
         usageQueryTotalDuration = summaries.reduce(0) { $0 + $1.totalTime }
     }
 
@@ -1741,6 +1759,56 @@ final class StatisticsEngine {
                 monthStart: monthStart,
                 totalTime: durationByMonth[monthStart, default: 0]
             )
+        }
+    }
+
+    nonisolated private static func monthlyWeekUsageSummaries(
+        for logs: [PreparedLog],
+        interval: DateInterval,
+        calendar: Calendar
+    ) -> [MonthlyWeekUsageSummary] {
+        // 1. 建立查询区间内每个自然月的四个固定周段，保证所有月份拥有相同的比较结构。
+        guard let firstMonth = calendar.dateInterval(of: .month, for: interval.start)?.start else {
+            return []
+        }
+
+        var monthStarts: [Date] = []
+        var cursor = firstMonth
+        while cursor < interval.end {
+            monthStarts.append(cursor)
+            guard let nextMonth = calendar.date(byAdding: .month, value: 1, to: cursor) else { break }
+            cursor = nextMonth
+        }
+
+        var durationsByMonth = Dictionary(
+            uniqueKeysWithValues: monthStarts.map { ($0, Array(repeating: 0.0, count: 4)) }
+        )
+
+        // 2. 以 1–7、8–14、15–21、22–月底划分四段；最后一段吸收多出的日期，避免月底数据丢失。
+        for log in logs {
+            guard log.startTime >= interval.start,
+                  log.startTime < interval.end,
+                  let monthStart = calendar.dateInterval(of: .month, for: log.startTime)?.start,
+                  var weekDurations = durationsByMonth[monthStart] else {
+                continue
+            }
+
+            let dayOfMonth = max(1, calendar.component(.day, from: log.startTime))
+            let weekIndex = min((dayOfMonth - 1) / 7, 3)
+            weekDurations[weekIndex] += log.duration
+            durationsByMonth[monthStart] = weekDurations
+        }
+
+        // 3. 按月份和周次稳定输出，视图层可以直接生成每月四柱的分组图。
+        return monthStarts.flatMap { monthStart in
+            let weekDurations = durationsByMonth[monthStart] ?? Array(repeating: 0, count: 4)
+            return weekDurations.enumerated().map { index, duration in
+                MonthlyWeekUsageSummary(
+                    monthStart: monthStart,
+                    weekIndex: index + 1,
+                    totalTime: duration
+                )
+            }
         }
     }
 

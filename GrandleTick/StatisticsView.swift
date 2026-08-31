@@ -318,6 +318,7 @@ struct StatisticsView: View {
                 domainOptions: engine.usageDomainOptions,
                 pdfOptions: engine.usagePDFOptions,
                 monthlySummaries: engine.monthlyUsageSummaries,
+                monthlyWeekSummaries: engine.monthlyWeekUsageSummaries,
                 totalDuration: engine.usageQueryTotalDuration,
                 isLoading: engine.isLoadingUsageQuery,
                 formatDuration: formatCompactDuration
@@ -739,6 +740,7 @@ private struct UsageQuerySection: View {
     let domainOptions: [FilterOption]
     let pdfOptions: [FilterOption]
     let monthlySummaries: [MonthlyUsageSummary]
+    let monthlyWeekSummaries: [MonthlyWeekUsageSummary]
     let totalDuration: TimeInterval
     let isLoading: Bool
     let formatDuration: (TimeInterval) -> String
@@ -783,17 +785,60 @@ private struct UsageQuerySection: View {
         } ?? displayedMonthlySummaries.last
     }
 
-    private var maximumHours: Double {
-        max(1, (displayedMonthlySummaries.map(\.totalTime).max() ?? 0) / 3600 * 1.15)
+    private var displayedMonthlyWeekSummaries: [MonthlyWeekUsageSummary] {
+        guard let firstMonth = displayedMonthlySummaries.first?.monthStart,
+              let lastMonth = displayedMonthlySummaries.last?.monthStart else {
+            return monthlyWeekSummaries
+        }
+        return monthlyWeekSummaries.filter {
+            $0.monthStart >= firstMonth && $0.monthStart <= lastMonth
+        }
     }
 
-    private var chartMonthDomain: ClosedRange<Date> {
-        // 为单月数据也保留一个完整自然月的横轴，避免日期域退化为零长度。
-        let firstMonth = displayedMonthlySummaries.first?.monthStart ?? Date()
-        let lastMonth = displayedMonthlySummaries.last?.monthStart ?? firstMonth
-        let end = Calendar.current.date(byAdding: .month, value: 1, to: lastMonth)
-            ?? lastMonth.addingTimeInterval(31 * 24 * 60 * 60)
-        return firstMonth...end
+    private var maximumHours: Double {
+        max(1, (displayedMonthlyWeekSummaries.map(\.totalTime).max() ?? 0) / 3600 * 1.15)
+    }
+
+    /// 根据展示的月份数量动态计算柱宽，月份少时柱子更粗、间距更紧凑，避免大面积留白。
+    private var dynamicBarWidth: CGFloat {
+        let monthCount = displayedMonthlySummaries.count
+        switch monthCount {
+        case ...2:  return 28
+        case 3:     return 24
+        case 4...5: return 20
+        case 6...8: return 16
+        default:    return 12
+        }
+    }
+
+    /// 柱宽变化时同步调整圆角，保持视觉比例协调。
+    private var dynamicCornerRadius: CGFloat {
+        dynamicBarWidth >= 20 ? 5 : 4
+    }
+
+    /// 根据月份数量计算绘图区宽度。每个月份占据固定槽位宽度，少月时图表自动收窄，
+    /// 多月时允许占满容器，避免柱组在大片空白中迷失。
+    private var chartPlotWidth: CGFloat? {
+        let monthCount = displayedMonthlySummaries.count
+        // 每个月份 4 根柱 + 间隙，按柱宽的倍率估算合理的槽位宽度。
+        let slotWidth = dynamicBarWidth * 6.5
+        let computedWidth = CGFloat(monthCount) * slotWidth
+        // 月份较多时不设固定宽度，让 Chart 自行铺满可用空间。
+        return monthCount <= 7 ? max(computedWidth, 180) : nil
+    }
+
+    private var selectedMonthKey: Binding<String?> {
+        Binding(
+            get: {
+                selectedMonth.map { monthChartKey($0) }
+            },
+            set: { key in
+                // 分类横轴返回的是稳定的月份键，这里映射回日期以保留原有的月份点击查询能力。
+                selectedMonth = displayedMonthlySummaries.first {
+                    monthChartKey($0.monthStart) == key
+                }?.monthStart
+            }
+        )
     }
 
     var body: some View {
@@ -1047,21 +1092,34 @@ private struct UsageQuerySection: View {
                 }
             }
 
-            Chart(displayedMonthlySummaries) { summary in
+            Chart(displayedMonthlyWeekSummaries) { summary in
                 BarMark(
-                    x: .value("月份", summary.monthStart, unit: .month),
+                    x: .value("月份", monthChartKey(summary.monthStart)),
                     y: .value("小时", summary.totalTime / 3600),
-                    width: .fixed(56)
+                    width: .fixed(dynamicBarWidth)
                 )
-                .foregroundStyle(
-                    isSelected(summary)
-                        ? AppDesign.primaryBlue
-                        : AppDesign.primaryBlue.opacity(0.34)
+                .position(
+                    by: .value("周次", summary.weekIndex),
+                    span: .ratio(0.92)
                 )
-                .cornerRadius(5)
+                .foregroundStyle(weekColor(summary.weekIndex))
+                .cornerRadius(dynamicCornerRadius)
+
+                if summary.totalTime == 0 {
+                    // 零值柱本身没有高度，用基线圆点保留周位置，避免误以为该月缺少某一周。
+                    PointMark(
+                        x: .value("月份", monthChartKey(summary.monthStart)),
+                        y: .value("小时", 0)
+                    )
+                    .position(
+                        by: .value("周次", summary.weekIndex),
+                        span: .ratio(0.92)
+                    )
+                    .symbolSize(18)
+                    .foregroundStyle(weekColor(summary.weekIndex).opacity(0.7))
+                }
             }
             .frame(height: 260)
-            .chartXScale(domain: chartMonthDomain)
             .chartYScale(domain: 0...maximumHours)
             .chartYAxis {
                 AxisMarks(position: .leading) { value in
@@ -1075,46 +1133,56 @@ private struct UsageQuerySection: View {
                 }
             }
             .chartXAxis {
-                AxisMarks(
-                    values: .stride(
-                        by: .month,
-                        count: displayedMonthlySummaries.count > 8 ? 2 : 1
-                    )
-                ) { value in
-                    AxisGridLine()
+                AxisMarks { value in
+                    // 月份之间用虚线分隔，帮助辨认柱组归属。
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 4]))
+                        .foregroundStyle(Color.primary.opacity(0.08))
+                    AxisTick()
                     AxisValueLabel {
-                        if let date = value.as(Date.self) {
-                            Text(formatAxisMonth(date))
+                        if let key = value.as(String.self) {
+                            Text(formatAxisMonth(key))
                                 .font(.system(size: 9))
                         }
                     }
                 }
             }
-            .chartXSelection(value: $selectedMonth)
+            // 月份少时收窄绘图区域，让柱组自然聚拢而非铺满整个宽度。
+            .chartPlotStyle { plotArea in
+                plotArea.frame(width: chartPlotWidth)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .chartXSelection(value: selectedMonthKey)
             .id("\(selectedDimension.rawValue)|\(selectedRange.rawValue)|\(selectedItem ?? "")")
 
             HStack {
-                Text("横轴：月份 · 纵轴：小时")
-                    .font(.caption)
-                    .foregroundStyle(AppDesign.secondaryText)
+                HStack(spacing: 12) {
+                    ForEach(1...4, id: \.self) { weekIndex in
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(weekColor(weekIndex))
+                                .frame(width: 7, height: 7)
+                            Text("第\(weekIndex)周")
+                                .font(.caption)
+                                .foregroundStyle(AppDesign.secondaryText)
+                        }
+                    }
+                }
+
                 Spacer()
-                if let selectedSummary {
-                    Text("\(formatMonthYear(selectedSummary.monthStart)) · \(formatDuration(selectedSummary.totalTime))")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("第 4 周包含 22 日至月底")
+                        .font(.caption)
+                        .foregroundStyle(AppDesign.secondaryText)
+                    if let selectedSummary {
+                        Text("\(formatMonthYear(selectedSummary.monthStart)) · \(formatDuration(selectedSummary.totalTime))")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
                 }
             }
         }
         .padding(18)
         .statisticsPanel()
-    }
-
-    private func isSelected(_ summary: MonthlyUsageSummary) -> Bool {
-        guard let selectedSummary else { return false }
-        return Calendar.current.isDate(
-            summary.monthStart,
-            equalTo: selectedSummary.monthStart,
-            toGranularity: .month
-        )
     }
 
     private var emptyStateIcon: String {
@@ -1144,9 +1212,23 @@ private struct UsageQuerySection: View {
         return "\(formatMonthYear(first))—\(formatMonthYear(last)) · 仅展示有记录区间"
     }
 
-    private func formatAxisMonth(_ date: Date) -> String {
-        let components = Calendar.current.dateComponents([.month], from: date)
-        return "\(components.month ?? 0)月"
+    private func monthChartKey(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month], from: date)
+        return String(format: "%04d-%02d", components.year ?? 0, components.month ?? 0)
+    }
+
+    private func formatAxisMonth(_ key: String) -> String {
+        guard let month = Int(key.suffix(2)) else { return key }
+        return "\(month)月"
+    }
+
+    private func weekColor(_ weekIndex: Int) -> Color {
+        switch weekIndex {
+        case 1: return AppDesign.primaryBlue.opacity(0.34)
+        case 2: return AppDesign.primaryBlue.opacity(0.52)
+        case 3: return AppDesign.primaryBlue.opacity(0.72)
+        default: return AppDesign.primaryBlue
+        }
     }
 
     private func formatMonthYear(_ date: Date) -> String {
