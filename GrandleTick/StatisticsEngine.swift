@@ -1266,7 +1266,10 @@ final class StatisticsEngine {
                 }
                 return log.appName.lowercased() == normalizedKey
             case .domain:
-                return log.resolvedDomain?.lowercased() == normalizedKey
+                // 域名趋势只统计既有规则判定为学习的网页记录；B 站仍需知识区标识才能计入。
+                return log.isWebsite
+                    && log.isStudy
+                    && log.resolvedDomain?.lowercased() == normalizedKey
             case .pdf:
                 guard log.isPDF else { return false }
                 return (log.pdfIdentifier ?? log.windowTitle).lowercased() == normalizedKey
@@ -1663,8 +1666,13 @@ final class StatisticsEngine {
     }
 
     nonisolated private static func buildUsageDomainOptions(from logs: [PreparedLog]) -> [FilterOption] {
-        // 域名大小写不应生成重复选项；选择键统一小写，显示名保留最近记录中的写法。
-        let domainLogs = logs.filter { $0.resolvedDomain != nil }
+        // 1. 复用统一学习分类，只保留白名单网站和已识别的学习网页记录。
+        // 这样娱乐网站、局域网地址与浏览器内部页不会进入查询候选项。
+        let domainLogs = logs.filter {
+            $0.isWebsite && $0.isStudy && $0.resolvedDomain != nil
+        }
+
+        // 2. 域名大小写不应生成重复选项；选择键统一小写，显示名保留最近记录中的写法。
         let grouped = Dictionary(grouping: domainLogs) { $0.resolvedDomain?.lowercased() ?? "" }
         return grouped.compactMap { queryKey, groupedLogs in
             guard !queryKey.isEmpty else { return nil }

@@ -765,15 +765,35 @@ private struct UsageQuerySection: View {
         return options.first { $0.queryKey == selectedItem }
     }
 
+    private var displayedMonthlySummaries: [MonthlyUsageSummary] {
+        // 1. 裁掉首尾连续的零值月份，避免少量近期数据全部挤在图表右侧。
+        guard let firstActiveIndex = monthlySummaries.firstIndex(where: { $0.totalTime > 0 }),
+              let lastActiveIndex = monthlySummaries.lastIndex(where: { $0.totalTime > 0 }) else {
+            return monthlySummaries
+        }
+
+        // 2. 保留首尾活跃月之间的零值月份，它们代表真实中断，不能为了居中而抹掉。
+        return Array(monthlySummaries[firstActiveIndex...lastActiveIndex])
+    }
+
     private var selectedSummary: MonthlyUsageSummary? {
-        guard let selectedMonth else { return monthlySummaries.last }
-        return monthlySummaries.first { summary in
+        guard let selectedMonth else { return displayedMonthlySummaries.last }
+        return displayedMonthlySummaries.first { summary in
             Calendar.current.isDate(summary.monthStart, equalTo: selectedMonth, toGranularity: .month)
-        } ?? monthlySummaries.last
+        } ?? displayedMonthlySummaries.last
     }
 
     private var maximumHours: Double {
-        max(1, (monthlySummaries.map(\.totalTime).max() ?? 0) / 3600 * 1.15)
+        max(1, (displayedMonthlySummaries.map(\.totalTime).max() ?? 0) / 3600 * 1.15)
+    }
+
+    private var chartMonthDomain: ClosedRange<Date> {
+        // 为单月数据也保留一个完整自然月的横轴，避免日期域退化为零长度。
+        let firstMonth = displayedMonthlySummaries.first?.monthStart ?? Date()
+        let lastMonth = displayedMonthlySummaries.last?.monthStart ?? firstMonth
+        let end = Calendar.current.date(byAdding: .month, value: 1, to: lastMonth)
+            ?? lastMonth.addingTimeInterval(31 * 24 * 60 * 60)
+        return firstMonth...end
     }
 
     var body: some View {
@@ -783,7 +803,7 @@ private struct UsageQuerySection: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("查询对象")
                             .font(.headline)
-                        Text("先按类别查找对象，再按自然月查看使用时长")
+                        Text(queryDescription)
                             .font(.caption)
                             .foregroundStyle(AppDesign.secondaryText)
                     }
@@ -1027,10 +1047,11 @@ private struct UsageQuerySection: View {
                 }
             }
 
-            Chart(monthlySummaries) { summary in
+            Chart(displayedMonthlySummaries) { summary in
                 BarMark(
                     x: .value("月份", summary.monthStart, unit: .month),
-                    y: .value("小时", summary.totalTime / 3600)
+                    y: .value("小时", summary.totalTime / 3600),
+                    width: .fixed(56)
                 )
                 .foregroundStyle(
                     isSelected(summary)
@@ -1040,6 +1061,7 @@ private struct UsageQuerySection: View {
                 .cornerRadius(5)
             }
             .frame(height: 260)
+            .chartXScale(domain: chartMonthDomain)
             .chartYScale(domain: 0...maximumHours)
             .chartYAxis {
                 AxisMarks(position: .leading) { value in
@@ -1056,7 +1078,7 @@ private struct UsageQuerySection: View {
                 AxisMarks(
                     values: .stride(
                         by: .month,
-                        count: monthlySummaries.count > 8 ? 2 : 1
+                        count: displayedMonthlySummaries.count > 8 ? 2 : 1
                     )
                 ) { value in
                     AxisGridLine()
@@ -1103,12 +1125,23 @@ private struct UsageQuerySection: View {
         }
     }
 
+    private var queryDescription: String {
+        switch selectedDimension {
+        case .app:
+            return "学习 App 优先展示，其余应用合并为娱乐与杂项"
+        case .domain:
+            return "仅显示白名单和已识别的学习网站"
+        case .pdf:
+            return "搜索 PDF，再按自然月查看使用时长"
+        }
+    }
+
     private func formatMonthRange() -> String {
-        guard let first = monthlySummaries.first?.monthStart,
-              let last = monthlySummaries.last?.monthStart else {
+        guard let first = displayedMonthlySummaries.first?.monthStart,
+              let last = displayedMonthlySummaries.last?.monthStart else {
             return selectedRange.title
         }
-        return "\(formatMonthYear(first))—\(formatMonthYear(last)) · 按月汇总"
+        return "\(formatMonthYear(first))—\(formatMonthYear(last)) · 仅展示有记录区间"
     }
 
     private func formatAxisMonth(_ date: Date) -> String {
