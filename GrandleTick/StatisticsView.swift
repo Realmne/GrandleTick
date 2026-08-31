@@ -1095,10 +1095,11 @@ private struct UsageQuerySection: View {
                 )
                 .position(
                     by: .value("周次", summary.weekIndex),
-                    span: .ratio(0.82)
+                    // 同月四柱紧凑排列，两侧留白拉开月份间距。
+                    span: .ratio(0.62)
                 )
                 .foregroundStyle(weekColor(summary.weekIndex))
-                .cornerRadius(4)
+                .cornerRadius(3)
 
                 if summary.totalTime == 0 {
                     // 零值柱本身没有高度，用基线圆点保留周位置，避免误以为该月缺少某一周。
@@ -1108,7 +1109,7 @@ private struct UsageQuerySection: View {
                     )
                     .position(
                         by: .value("周次", summary.weekIndex),
-                        span: .ratio(0.82)
+                        span: .ratio(0.62)
                     )
                     .symbolSize(14)
                     .foregroundStyle(weekColor(summary.weekIndex).opacity(0.7))
