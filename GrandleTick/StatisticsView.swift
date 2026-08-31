@@ -744,6 +744,7 @@ private struct UsageQuerySection: View {
     let formatDuration: (TimeInterval) -> String
 
     @State private var optionSearchText = ""
+    @State private var isShowingOptionPicker = false
 
     private var options: [FilterOption] {
         switch selectedDimension {
@@ -757,11 +758,6 @@ private struct UsageQuerySection: View {
         let keyword = optionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty else { return options }
         return options.filter { $0.name.localizedStandardContains(keyword) }
-    }
-
-    private var visibleOptions: [FilterOption] {
-        // 空搜索时先展示高频项；输入关键字后扩大结果数量，避免上百个域名一次塞进菜单。
-        Array(matchingOptions.prefix(optionSearchText.isEmpty ? 24 : 60))
     }
 
     private var selectedOption: FilterOption? {
@@ -819,6 +815,7 @@ private struct UsageQuerySection: View {
                                 if let firstMatch = matchingOptions.first {
                                     selectedItem = firstMatch.queryKey
                                     optionSearchText = ""
+                                    isShowingOptionPicker = false
                                 }
                             }
 
@@ -840,31 +837,8 @@ private struct UsageQuerySection: View {
                             .fill(AppDesign.elevatedPanelBackground)
                     )
 
-                    Menu {
-                        if visibleOptions.isEmpty {
-                            Text("没有匹配的\(selectedDimension.title)")
-                        } else {
-                            ForEach(visibleOptions) { option in
-                                Button {
-                                    selectedItem = option.queryKey
-                                    optionSearchText = ""
-                                } label: {
-                                    HStack {
-                                        Text(option.name)
-                                        Spacer()
-                                        Text(formatDuration(option.totalTime))
-                                        if selectedItem == option.queryKey {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-
-                            if matchingOptions.count > visibleOptions.count {
-                                Divider()
-                                Text("还有 \(matchingOptions.count - visibleOptions.count) 项，请继续输入关键字")
-                            }
-                        }
+                    Button {
+                        isShowingOptionPicker.toggle()
                     } label: {
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -890,6 +864,9 @@ private struct UsageQuerySection: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(options.isEmpty)
+                    .popover(isPresented: $isShowingOptionPicker, arrowEdge: .top) {
+                        optionPickerPopover
+                    }
                 }
 
                 HStack(spacing: 8) {
@@ -909,7 +886,7 @@ private struct UsageQuerySection: View {
                         Text("匹配 \(matchingOptions.count) 项")
                             .font(.caption)
                             .foregroundStyle(AppDesign.secondaryText)
-                    } else if options.count > visibleOptions.count {
+                    } else if !options.isEmpty {
                         Text("共 \(options.count) 项，可输入名称搜索")
                             .font(.caption)
                             .foregroundStyle(AppDesign.secondaryText)
@@ -945,8 +922,85 @@ private struct UsageQuerySection: View {
                 monthlyChart
             }
         }
-        .onChange(of: selectedDimension) { _, _ in optionSearchText = "" }
-        .onChange(of: selectedRange) { _, _ in optionSearchText = "" }
+        .onChange(of: selectedDimension) { _, _ in
+            optionSearchText = ""
+            isShowingOptionPicker = false
+        }
+        .onChange(of: selectedRange) { _, _ in
+            optionSearchText = ""
+            isShowingOptionPicker = false
+        }
+    }
+
+    private var optionPickerPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("选择\(selectedDimension.title)")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("\(matchingOptions.count) 项")
+                    .font(.caption)
+                    .foregroundStyle(AppDesign.secondaryText)
+            }
+
+            Divider()
+
+            if matchingOptions.isEmpty {
+                Text("没有匹配的\(selectedDimension.title)")
+                    .font(.caption)
+                    .foregroundStyle(AppDesign.secondaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // 固定浮层尺寸并在内部滚动，避免长文件名或大量选项把系统菜单撑满整个窗口。
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(matchingOptions) { option in
+                            Button {
+                                selectedItem = option.queryKey
+                                optionSearchText = ""
+                                isShowingOptionPicker = false
+                            } label: {
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(option.name)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(AppDesign.primaryText)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Text(formatDuration(option.totalTime))
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(AppDesign.secondaryText)
+                                    }
+
+                                    Spacer(minLength: 8)
+
+                                    if selectedItem == option.queryKey {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(AppDesign.primaryBlue)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(height: 42)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(selectedItem == option.queryKey ? AppDesign.primaryBlueMuted : Color.clear)
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 380, height: optionPickerHeight)
+    }
+
+    private var optionPickerHeight: CGFloat {
+        // 最多直接露出 6 行，其余内容通过滚动查看；少量结果时浮层自动收紧。
+        let visibleRowCount = min(max(matchingOptions.count, 1), 6)
+        return 70 + CGFloat(visibleRowCount * 46)
     }
 
     private var monthlyChart: some View {
