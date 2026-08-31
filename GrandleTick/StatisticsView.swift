@@ -155,7 +155,7 @@ struct StatisticsView: View {
         }
         .onChange(of: selectedUsageItem) { _, newValue in
             selectedUsageMonth = nil
-            engine.updateUsageQuery(for: selectedUsageDimension, itemName: newValue)
+            engine.updateUsageQuery(for: selectedUsageDimension, queryKey: newValue)
         }
         .onChange(of: searchText) { _, _ in scheduleSearchRefresh() }
         .onChange(of: selectedContentFilter) { _, _ in refreshFiltersOnly() }
@@ -316,6 +316,7 @@ struct StatisticsView: View {
                 selectedMonth: $selectedUsageMonth,
                 appOptions: engine.usageAppOptions,
                 domainOptions: engine.usageDomainOptions,
+                pdfOptions: engine.usagePDFOptions,
                 monthlySummaries: engine.monthlyUsageSummaries,
                 totalDuration: engine.usageQueryTotalDuration,
                 isLoading: engine.isLoadingUsageQuery,
@@ -515,18 +516,24 @@ struct StatisticsView: View {
 
     private func sanitizeUsageQuerySelection() {
         // 1. 维度切换或时间范围刷新后，只保留仍存在于新选项集中的查询对象。
-        let options = selectedUsageDimension == .app
-            ? engine.usageAppOptions
-            : engine.usageDomainOptions
+        let options: [FilterOption]
+        switch selectedUsageDimension {
+        case .app:
+            options = engine.usageAppOptions
+        case .domain:
+            options = engine.usageDomainOptions
+        case .pdf:
+            options = engine.usagePDFOptions
+        }
         let resolvedItem = selectedUsageItem.flatMap { current in
-            options.contains(where: { $0.name == current }) ? current : nil
-        } ?? options.first?.name
+            options.contains(where: { $0.queryKey == current }) ? current : nil
+        } ?? options.first?.queryKey
 
         // 2. 选择发生变化时交给 onChange 统一刷新；未变化时主动重算刚加载的新一批月度数据。
         if selectedUsageItem != resolvedItem {
             selectedUsageItem = resolvedItem
         } else {
-            engine.updateUsageQuery(for: selectedUsageDimension, itemName: resolvedItem)
+            engine.updateUsageQuery(for: selectedUsageDimension, queryKey: resolvedItem)
         }
     }
 
@@ -730,13 +737,36 @@ private struct UsageQuerySection: View {
     @Binding var selectedMonth: Date?
     let appOptions: [FilterOption]
     let domainOptions: [FilterOption]
+    let pdfOptions: [FilterOption]
     let monthlySummaries: [MonthlyUsageSummary]
     let totalDuration: TimeInterval
     let isLoading: Bool
     let formatDuration: (TimeInterval) -> String
 
+    @State private var optionSearchText = ""
+
     private var options: [FilterOption] {
-        selectedDimension == .app ? appOptions : domainOptions
+        switch selectedDimension {
+        case .app: return appOptions
+        case .domain: return domainOptions
+        case .pdf: return pdfOptions
+        }
+    }
+
+    private var matchingOptions: [FilterOption] {
+        let keyword = optionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return options }
+        return options.filter { $0.name.localizedStandardContains(keyword) }
+    }
+
+    private var visibleOptions: [FilterOption] {
+        // 空搜索时先展示高频项；输入关键字后扩大结果数量，避免上百个域名一次塞进菜单。
+        Array(matchingOptions.prefix(optionSearchText.isEmpty ? 24 : 60))
+    }
+
+    private var selectedOption: FilterOption? {
+        guard let selectedItem else { return nil }
+        return options.first { $0.queryKey == selectedItem }
     }
 
     private var selectedSummary: MonthlyUsageSummary? {
@@ -757,7 +787,7 @@ private struct UsageQuerySection: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("查询对象")
                             .font(.headline)
-                        Text("按自然月查看某个 App 或域名的全部已记录使用时长")
+                        Text("先按类别查找对象，再按自然月查看使用时长")
                             .font(.caption)
                             .foregroundStyle(AppDesign.secondaryText)
                     }
@@ -777,38 +807,112 @@ private struct UsageQuerySection: View {
                     }
                 }
 
-                HStack(spacing: 12) {
-                    Menu {
-                        ForEach(options) { option in
-                            Button {
-                                selectedItem = option.name
-                            } label: {
-                                HStack {
-                                    Text(option.name)
-                                    Spacer()
-                                    Text(formatDuration(option.totalTime))
+                HStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(AppDesign.tertiaryText)
+
+                        TextField("搜索\(selectedDimension.title)名称", text: $optionSearchText)
+                            .textFieldStyle(.plain)
+                            .onSubmit {
+                                // 回车直接选择首个匹配项，键盘查询不必再展开选择框。
+                                if let firstMatch = matchingOptions.first {
+                                    selectedItem = firstMatch.queryKey
+                                    optionSearchText = ""
                                 }
+                            }
+
+                        if !optionSearchText.isEmpty {
+                            Button {
+                                optionSearchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(AppDesign.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("清空搜索")
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: AppDesign.controlHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                            .fill(AppDesign.elevatedPanelBackground)
+                    )
+
+                    Menu {
+                        if visibleOptions.isEmpty {
+                            Text("没有匹配的\(selectedDimension.title)")
+                        } else {
+                            ForEach(visibleOptions) { option in
+                                Button {
+                                    selectedItem = option.queryKey
+                                    optionSearchText = ""
+                                } label: {
+                                    HStack {
+                                        Text(option.name)
+                                        Spacer()
+                                        Text(formatDuration(option.totalTime))
+                                        if selectedItem == option.queryKey {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+
+                            if matchingOptions.count > visibleOptions.count {
+                                Divider()
+                                Text("还有 \(matchingOptions.count - visibleOptions.count) 项，请继续输入关键字")
                             }
                         }
                     } label: {
-                        FilterChip(
-                            title: selectedDimension.title,
-                            value: selectedItem ?? "请选择查询对象"
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("选择\(selectedDimension.title)")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(AppDesign.secondaryText)
+                                Text(selectedOption?.name ?? "请选择查询对象")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(AppDesign.primaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(AppDesign.tertiaryText)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(width: 250, height: AppDesign.controlHeight)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppDesign.controlCornerRadius, style: .continuous)
+                                .fill(AppDesign.elevatedPanelBackground)
                         )
                     }
                     .buttonStyle(.plain)
                     .disabled(options.isEmpty)
+                }
 
-                    HStack(spacing: 8) {
-                        ForEach(UsageQueryRange.allCases) { range in
-                            Button(range.title) {
-                                selectedRange = range
-                            }
-                            .buttonStyle(AppCapsuleButtonStyle(
-                                role: selectedRange == range ? .primary : .secondary,
-                                compact: true
-                            ))
+                HStack(spacing: 8) {
+                    ForEach(UsageQueryRange.allCases) { range in
+                        Button(range.title) {
+                            selectedRange = range
                         }
+                        .buttonStyle(AppCapsuleButtonStyle(
+                            role: selectedRange == range ? .primary : .secondary,
+                            compact: true
+                        ))
+                    }
+
+                    Spacer()
+
+                    if !optionSearchText.isEmpty {
+                        Text("匹配 \(matchingOptions.count) 项")
+                            .font(.caption)
+                            .foregroundStyle(AppDesign.secondaryText)
+                    } else if options.count > visibleOptions.count {
+                        Text("共 \(options.count) 项，可输入名称搜索")
+                            .font(.caption)
+                            .foregroundStyle(AppDesign.secondaryText)
                     }
                 }
             }
@@ -826,10 +930,10 @@ private struct UsageQuerySection: View {
                 .statisticsPanel()
             } else if options.isEmpty || selectedItem == nil {
                 VStack(spacing: 12) {
-                    Image(systemName: selectedDimension == .app ? "app.dashed" : "network.slash")
+                    Image(systemName: emptyStateIcon)
                         .font(.system(size: 34))
                         .foregroundStyle(AppDesign.tertiaryText)
-                    Text(selectedDimension == .app ? "这个时间范围没有 App 记录" : "这个时间范围没有域名记录")
+                    Text("这个时间范围没有\(selectedDimension.title)记录")
                         .font(.headline)
                     Text("可以切换查询类型或扩大月份范围。")
                         .font(.caption)
@@ -841,13 +945,15 @@ private struct UsageQuerySection: View {
                 monthlyChart
             }
         }
+        .onChange(of: selectedDimension) { _, _ in optionSearchText = "" }
+        .onChange(of: selectedRange) { _, _ in optionSearchText = "" }
     }
 
     private var monthlyChart: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(selectedItem ?? "") 使用趋势")
+                    Text("\(selectedOption?.name ?? "") 使用趋势")
                         .font(.headline)
                         .lineLimit(1)
                     Text(formatMonthRange())
@@ -933,6 +1039,14 @@ private struct UsageQuerySection: View {
             equalTo: selectedSummary.monthStart,
             toGranularity: .month
         )
+    }
+
+    private var emptyStateIcon: String {
+        switch selectedDimension {
+        case .app: return "app.dashed"
+        case .domain: return "network.slash"
+        case .pdf: return "doc.text.magnifyingglass"
+        }
     }
 
     private func formatMonthRange() -> String {

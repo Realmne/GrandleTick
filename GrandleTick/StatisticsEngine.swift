@@ -23,7 +23,7 @@ enum DetailCategory: String, Sendable {
 
 /// 单项使用趋势的查询维度。
 enum UsageQueryDimension: String, CaseIterable, Identifiable, Sendable {
-    case app, domain
+    case app, domain, pdf
 
     var id: String { rawValue }
 
@@ -31,6 +31,7 @@ enum UsageQueryDimension: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .app: return "App"
         case .domain: return "域名"
+        case .pdf: return "PDF"
         }
     }
 }
@@ -78,7 +79,7 @@ struct DaySummary: Identifiable, Sendable {
     var id: Date { date }
 }
 
-/// 某个 App 或域名在一个自然月中的累计使用时长。
+/// 某个 App、域名或 PDF 在一个自然月中的累计使用时长。
 struct MonthlyUsageSummary: Identifiable, Sendable {
     let monthStart: Date
     let totalTime: TimeInterval
@@ -96,7 +97,16 @@ struct RankingEntry: Identifiable, Sendable {
 struct FilterOption: Identifiable, Sendable {
     let name: String
     let totalTime: TimeInterval
-    var id: String { name }
+    let queryKey: String
+
+    init(name: String, totalTime: TimeInterval, queryKey: String? = nil) {
+        self.name = name
+        self.totalTime = totalTime
+        // 显示名与查询键默认一致；PDF 使用文件指纹作为查询键，避免重命名后月度记录被拆散。
+        self.queryKey = queryKey ?? name
+    }
+
+    var id: String { queryKey }
 }
 
 /// 按维度分组的明细数据
@@ -1094,6 +1104,7 @@ final class StatisticsEngine {
     var usageQueryLogs: [PreparedLog] = []
     var usageAppOptions: [FilterOption] = []
     var usageDomainOptions: [FilterOption] = []
+    var usagePDFOptions: [FilterOption] = []
     var monthlyUsageSummaries: [MonthlyUsageSummary] = []
     var usageQueryTotalDuration: TimeInterval = 0
     var usageQueryGeneration: UInt = 0
@@ -1191,6 +1202,7 @@ final class StatisticsEngine {
             usageQueryLogs = []
             usageAppOptions = []
             usageDomainOptions = []
+            usagePDFOptions = []
             monthlyUsageSummaries = []
             usageQueryTotalDuration = 0
             isLoadingUsageQuery = false
@@ -1212,9 +1224,10 @@ final class StatisticsEngine {
 
             guard !Task.isCancelled else { return }
 
-            // 2. 查询页统计“已记录的全部使用时间”；学习榜仍沿用原规则单独排除娱乐记录。
-            let appOptions = Self.buildFilterOptions(from: logs, dimension: .app)
-            let domainOptions = Self.buildFilterOptions(from: logs, dimension: .domain)
+            // 2. App 只单列学习相关应用，其余普通应用合并；域名和 PDF 则各自按原始标识汇总。
+            let appOptions = Self.buildUsageAppOptions(from: logs)
+            let domainOptions = Self.buildUsageDomainOptions(from: logs)
+            let pdfOptions = Self.buildUsagePDFOptions(from: logs)
 
             await MainActor.run {
                 guard token == self.usageQueryLoadingToken else { return }
@@ -1224,30 +1237,39 @@ final class StatisticsEngine {
                 self.usageQueryLogs = logs
                 self.usageAppOptions = appOptions
                 self.usageDomainOptions = domainOptions
+                self.usagePDFOptions = pdfOptions
                 self.usageQueryGeneration &+= 1
                 self.isLoadingUsageQuery = false
             }
         }
     }
 
-    /// 根据用户选中的 App 或域名，在内存中快速生成按月趋势。
-    func updateUsageQuery(for dimension: UsageQueryDimension, itemName: String?) {
+    /// 根据用户选中的 App、域名或 PDF，在内存中快速生成按月趋势。
+    func updateUsageQuery(for dimension: UsageQueryDimension, queryKey: String?) {
         guard let interval = usageQueryInterval else {
             monthlyUsageSummaries = []
             usageQueryTotalDuration = 0
             return
         }
 
-        // 1. 只保留与当前维度和名称完全匹配的日志，避免相似 App 名或子域名互相串入。
-        let normalizedName = itemName?.lowercased()
+        // 1. 按分类键筛选日志。PDF 使用稳定指纹，App 的“其他”项使用专用键，避免与真实名称冲突。
+        let normalizedKey = queryKey?.lowercased()
+        let learningAppNames = Self.learningAppNames(in: usageQueryLogs)
         let matchingLogs = usageQueryLogs.filter { log in
-            guard let normalizedName else { return false }
+            guard let normalizedKey else { return false }
 
             switch dimension {
             case .app:
-                return log.appName.lowercased() == normalizedName
+                guard !log.isWebsite, !log.isPDF else { return false }
+                if normalizedKey == Self.otherAppsQueryKey {
+                    return !learningAppNames.contains(log.appName.lowercased())
+                }
+                return log.appName.lowercased() == normalizedKey
             case .domain:
-                return log.resolvedDomain?.lowercased() == normalizedName
+                return log.resolvedDomain?.lowercased() == normalizedKey
+            case .pdf:
+                guard log.isPDF else { return false }
+                return (log.pdfIdentifier ?? log.windowTitle).lowercased() == normalizedKey
             }
         }
 
@@ -1591,6 +1613,87 @@ final class StatisticsEngine {
         Self.rankingEntries(for: logs, dimension: dimension).map {
             FilterOption(name: $0.name, totalTime: $0.totalTime)
         }
+    }
+
+    nonisolated private static let otherAppsQueryKey = "__grandletick_other_apps__"
+
+    nonisolated private static func learningAppNames(in logs: [PreparedLog]) -> Set<String> {
+        // 网页和 PDF 已有独立查询分类，这里只识别白名单规则命中的普通学习应用。
+        Set(
+            logs.lazy
+                .filter { $0.isStudy && !$0.isWebsite && !$0.isPDF }
+                .map { $0.appName.lowercased() }
+        )
+    }
+
+    nonisolated private static func buildUsageAppOptions(from logs: [PreparedLog]) -> [FilterOption] {
+        // 1. 仅将学习相关普通 App 单独分组，避免娱乐应用把主要查询对象淹没。
+        let learningNames = learningAppNames(in: logs)
+        let appLogs = logs.filter { !$0.isWebsite && !$0.isPDF }
+        let groupedLearningLogs = Dictionary(grouping: appLogs.filter {
+            learningNames.contains($0.appName.lowercased())
+        }) { $0.appName.lowercased() }
+
+        var options = groupedLearningLogs.map { queryKey, groupedLogs in
+            let displayName = groupedLogs.max(by: { $0.startTime < $1.startTime })?.appName ?? queryKey
+            return FilterOption(
+                name: displayName,
+                totalTime: groupedLogs.reduce(0) { $0 + $1.duration },
+                queryKey: queryKey
+            )
+        }
+        .sorted { $0.totalTime > $1.totalTime }
+
+        // 2. 其余非网页、非 PDF 应用统一归入杂项，保留总量但不再逐项制造选择噪音。
+        let otherDuration = appLogs.reduce(0) { partialResult, log in
+            learningNames.contains(log.appName.lowercased())
+                ? partialResult
+                : partialResult + log.duration
+        }
+        if otherDuration > 0 {
+            options.append(
+                FilterOption(
+                    name: "其他娱乐与杂项",
+                    totalTime: otherDuration,
+                    queryKey: otherAppsQueryKey
+                )
+            )
+        }
+        return options
+    }
+
+    nonisolated private static func buildUsageDomainOptions(from logs: [PreparedLog]) -> [FilterOption] {
+        // 域名大小写不应生成重复选项；选择键统一小写，显示名保留最近记录中的写法。
+        let domainLogs = logs.filter { $0.resolvedDomain != nil }
+        let grouped = Dictionary(grouping: domainLogs) { $0.resolvedDomain?.lowercased() ?? "" }
+        return grouped.compactMap { queryKey, groupedLogs in
+            guard !queryKey.isEmpty else { return nil }
+            let displayName = groupedLogs.max(by: { $0.startTime < $1.startTime })?.resolvedDomain ?? queryKey
+            return FilterOption(
+                name: displayName,
+                totalTime: groupedLogs.reduce(0) { $0 + $1.duration },
+                queryKey: queryKey
+            )
+        }
+        .sorted { $0.totalTime > $1.totalTime }
+    }
+
+    nonisolated private static func buildUsagePDFOptions(from logs: [PreparedLog]) -> [FilterOption] {
+        // 1. 继续沿用历史 PDF 指纹作为合并键，让同一文件改名后仍是一条连续趋势。
+        let grouped = Dictionary(grouping: logs.filter(\.isPDF)) { log in
+            log.pdfIdentifier ?? log.windowTitle
+        }
+
+        // 2. 界面显示最近一次文件名，查询时仍传递稳定指纹。
+        return grouped.map { queryKey, groupedLogs in
+            let displayName = groupedLogs.max(by: { $0.startTime < $1.startTime })?.windowTitle ?? queryKey
+            return FilterOption(
+                name: displayName,
+                totalTime: groupedLogs.reduce(0) { $0 + $1.duration },
+                queryKey: queryKey
+            )
+        }
+        .sorted { $0.totalTime > $1.totalTime }
     }
 
     nonisolated private static func monthlyUsageSummaries(
